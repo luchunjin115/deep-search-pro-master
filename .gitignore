@@ -34,6 +34,17 @@ updated/
 .ruff_cache/
 .coverage
 htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Next.js前端依赖、构建与本地环境
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/*.tsbuildinfo
+frontend/next-env.d.ts
 
 # ========================
 # 虚拟环境

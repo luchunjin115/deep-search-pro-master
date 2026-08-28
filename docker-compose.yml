@@ -1,0 +1,28 @@
+name: deep-search-pro
+
+services:
+  postgres:
+    image: postgres:17.11-alpine3.24
+    container_name: deep-search-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-deep_search_pro}
+      POSTGRES_USER: ${POSTGRES_USER:-deep_search_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-demo-password-change-me}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    stop_grace_period: 30s
+
+volumes:
+  postgres_data:
+    name: deep-search-postgres-data

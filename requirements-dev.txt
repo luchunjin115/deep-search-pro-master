@@ -1,0 +1,8 @@
+-r requirements.txt
+
+# Development, linting, and test dependencies only.
+pytest>=8.4,<10
+pytest-asyncio>=1.2,<2
+pytest-cov>=6,<8
+ruff>=0.12,<1
+mypy>=1.17,<2

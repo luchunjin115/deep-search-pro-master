@@ -1,0 +1,92 @@
+{
+  "version": "m1-v1",
+  "random_seed": 20260828,
+  "data_classification": "synthetic_demo_data",
+  "tenant": {
+    "name": "LUMORIVA M1 合成演示公司",
+    "is_demo": true
+  },
+  "roles": [
+    "company_owner",
+    "product_scout",
+    "amazon_operator"
+  ],
+  "users": [
+    {
+      "email": "owner@demo.deepsearch.local",
+      "display_name": "演示公司负责人",
+      "role": "company_owner",
+      "market_scopes": ["DE", "FR"]
+    },
+    {
+      "email": "scout@demo.deepsearch.local",
+      "display_name": "演示选品人员",
+      "role": "product_scout",
+      "market_scopes": ["DE", "FR"]
+    },
+    {
+      "email": "de.operator@demo.deepsearch.local",
+      "display_name": "演示德国运营",
+      "role": "amazon_operator",
+      "market_scopes": ["DE"]
+    },
+    {
+      "email": "fr.operator@demo.deepsearch.local",
+      "display_name": "演示法国运营",
+      "role": "amazon_operator",
+      "market_scopes": ["FR"]
+    }
+  ],
+  "product": {
+    "spu": "LR-TL-MUSH",
+    "name_zh": "橙色复古蘑菇台灯",
+    "name_en": "LUMORIVA Orange Mushroom Table Lamp",
+    "aliases": ["蘑菇灯", "德国仓蘑菇灯", "mushroom lamp", "orange mushroom lamp"],
+    "status": "candidate",
+    "is_demo": true,
+    "variant": {
+      "sku": "LR-TL-MUSH-OR01",
+      "color": "orange",
+      "size": "30 cm",
+      "status": "candidate",
+      "specs": [
+        {"name": "height", "value": "30", "unit": "cm"},
+        {"name": "diameter", "value": "25", "unit": "cm"},
+        {"name": "color", "value": "orange", "unit": null},
+        {"name": "voltage", "value": "220", "unit": "V"}
+      ]
+    }
+  },
+  "warehouses": [
+    {
+      "code": "DE-FRA",
+      "market_code": "DE",
+      "name": "德国法兰克福合成演示仓",
+      "status": "active",
+      "is_demo": true,
+      "inventory": {
+        "on_hand": 150,
+        "reserved": 20,
+        "unsellable": 5,
+        "inbound": 80,
+        "safety_stock": 60,
+        "snapshot_at": "2026-08-28T06:00:00Z"
+      }
+    },
+    {
+      "code": "FR-CDG",
+      "market_code": "FR",
+      "name": "法国巴黎合成演示仓",
+      "status": "active",
+      "is_demo": true,
+      "inventory": {
+        "on_hand": 70,
+        "reserved": 10,
+        "unsellable": 0,
+        "inbound": 30,
+        "safety_stock": 40,
+        "snapshot_at": "2026-08-28T06:00:00Z"
+      }
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "version": "m1-v1",
+  "random_seed": 20260828,
+  "data_classification": "synthetic_demo_data",
+  "content_hash": "sha256:6c18f37c52fc8c5c98df0e6b3f58307b0c8752f04aecdf2190a92477cd4a70f5",
+  "seeded_row_counts": {
+    "tenants": 1,
+    "roles": 3,
+    "users": 4,
+    "user_roles": 4,
+    "products": 1,
+    "product_variants": 1,
+    "product_specs": 4,
+    "warehouses": 2,
+    "inventory_snapshots": 2,
+    "threads": 0,
+    "messages": 0,
+    "agent_runs": 0,
+    "tool_calls": 0,
+    "evidences": 0
+  },
+  "key_answer": {
+    "question": "德国仓蘑菇灯还有多少可售库存？",
+    "sku": "LR-TL-MUSH-OR01",
+    "warehouse_code": "DE-FRA",
+    "market_code": "DE",
+    "on_hand": 150,
+    "reserved": 20,
+    "unsellable": 5,
+    "available": 125,
+    "inbound": 80,
+    "safety_stock": 60,
+    "snapshot_at": "2026-08-28T06:00:00Z",
+    "synthetic_data": true
+  }
+}
