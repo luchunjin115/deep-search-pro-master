@@ -45,6 +45,8 @@ frontend/out/
 frontend/.env.local
 frontend/*.tsbuildinfo
 frontend/next-env.d.ts
+frontend/playwright-report/
+frontend/test-results/
 
 # ========================
 # 虚拟环境

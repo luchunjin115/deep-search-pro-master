@@ -1,12 +1,12 @@
-# M1新链路开发说明
+# M1库存查询垂直切片（已完成）
 
-> 当前项目正在从旧教学原型迁移到“库存查询垂直切片”。
+> 当前项目已经完成“库存查询垂直切片”M1-01至M1-21。
 >
 > M1新后端入口是`app.main:app`；下方原README暂时保留，用于说明旧`agent/api/tools`原型，不能作为M1启动说明。
 
 ## M1当前可运行范围
 
-截至M1-19，项目具备：
+截至M1-21，项目具备：
 
 - 可导入的FastAPI新入口和会检查数据库的`/health`接口；
 - 集中的M1环境变量配置；
@@ -30,17 +30,32 @@
 - 会话所有权、Evidence租户/市场范围、统一HTTP错误、请求级提交/回滚、OpenAPI和CORS保护；
 - 最小Next.js桌面端页面：登录、会话、自然语言提问、执行状态、回答和数据库Evidence侧栏；
 - 只保存在当前浏览器内存中的登录Token、键盘发送规则、加载/错误/空状态和合成演示数据标识；
-- M1基础配置、导入边界和真实PostgreSQL集成测试。
+- M1基础配置、导入边界和真实PostgreSQL集成测试；
+- 覆盖成功、跨市场拒绝、无效Token和PostgreSQL中断的Playwright Chromium端到端回归，以及零库存、无记录、商品歧义和数据库超时API集成测试；
+- 只通过公开HTTP接口执行健康检查、DE成功查询、Evidence核验和FR越权拒绝的安全演示脚本。
 
-执行本页Seed命令后，PostgreSQL会包含四个演示账号、蘑菇灯商品、DE/FR仓库和库存快照。当前可以通过网页或HTTP完成登录、创建会话、自然语言查询和Evidence查看；标准问题通过Mock依次调用`get_product_spec`和`search_inventory`，返回DE-FRA可售125、数据时间和数据库Evidence。真实Qwen调用需要另行配置API Key并显式运行冒烟测试；完整浏览器端到端与故障矩阵留到M1-20。
+执行本页Seed命令后，PostgreSQL会包含四个演示账号、蘑菇灯商品、DE/FR仓库和库存快照。当前可以通过网页或HTTP完成登录、创建会话、自然语言查询和Evidence查看；标准问题通过Mock依次调用`get_product_spec`和`search_inventory`，返回DE-FRA可售125、数据时间和数据库Evidence。M1已经用真实Chromium、Next.js生产构建、FastAPI和PostgreSQL验证这条链路及故障矩阵，并从全新PostgreSQL数据卷复现迁移、Seed和公开API演示。真实Qwen调用需要另行配置API Key并显式运行付费冒烟测试。
 
 ## M1本地准备
+
+建议环境：Python 3.11、Node.js 20.9或更高版本、npm，以及支持Compose的Docker Desktop。首次准备时先确认：
+
+```powershell
+python --version
+node --version
+npm --version
+docker version
+docker compose version
+```
 
 ### 1. 安装Python开发依赖
 
 ```powershell
+py -3.11 -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 ```
+
+如果`.venv`已经存在，不要重复创建，直接执行第二条安装命令。
 
 ### 2. 准备本地环境变量
 
@@ -331,7 +346,7 @@ Invoke-RestMethod http://127.0.0.1:8000/health
 
 ```powershell
 Set-Location frontend
-npm install
+npm ci
 npm run dev
 ```
 
@@ -346,9 +361,64 @@ npm run typecheck
 npm run lint
 npm test
 npm run build
+npm exec playwright install chromium
+npm run test:e2e
 ```
 
-### 9. 停止与数据保留
+`npm run test:e2e`会先执行Next.js生产构建，再以确定性Mock Provider启动真实FastAPI和Next.js服务，让Chromium完成四条端到端场景。测试会短暂停止并恢复本项目的PostgreSQL来验证安全错误，也会清理标题以`M1-20 E2E`开头的测试会话；因此请在本地开发数据库中运行，不要指向生产数据库，并确保3000和8000端口没有其他程序占用。
+
+### 9. 运行固定的M1公开API演示
+
+保持后端和PostgreSQL运行，在仓库根目录的新PowerShell窗口执行：
+
+```powershell
+.venv\Scripts\python.exe -m scripts.demo_m1
+```
+
+脚本会按固定顺序完成：
+
+```text
+健康检查确认PostgreSQL已连接
+→ 德国运营登录并刷新当前身份
+→ 创建DE演示Thread
+→ 自然语言查询德国仓蘑菇灯
+→ 核对回答、SKU、DE-FRA、可售125和数据库Evidence
+→ 法国运营登录并创建自己的Thread
+→ 查询德国仓并确认得到FORBIDDEN
+```
+
+成功时终端会看到类似结果：
+
+```text
+M1 public API demo passed.
+Health: Deep Search Pro M1 / database connected
+DE answer: ...可售库存为125件...合成演示数据...
+Evidence: LR-TL-MUSH-OR01 / DE-FRA / available 125
+Evidence source: inventory_snapshots/{合成快照UUID}
+FR-to-DE permission check: FORBIDDEN (expected)
+Data notice: synthetic demo data only.
+```
+
+脚本不会打印登录密码、JWT Token、数据库连接串或原始SQL。它只调用公开HTTP接口，不直接读取PostgreSQL；每次运行会新增两个演示Thread，并保留成功查询的审计与Evidence，便于现场讲解完整调用链。
+
+面试演示时建议按“身份范围→自然语言问题→两个受控Tool→125如何计算→右侧Evidence→FR越权拒绝→Trace和限制”顺序讲解，不要把Mock说成真实千问，也不要把合成数据说成真实Amazon库存。
+
+### 10. 可选：从完全空的本地数据库复现
+
+下面操作会永久删除名为`deep-search-postgres-data`的本项目本地数据卷，只适合全部数据都是可重新生成的合成演示数据时使用。不要把`.env`指向生产数据库，也不要把卷名改成其他项目的卷：
+
+```powershell
+docker compose down
+docker volume rm deep-search-postgres-data
+docker compose up -d --wait postgres
+.venv\Scripts\python.exe -m alembic upgrade head
+.venv\Scripts\python.exe -m scripts.seed_m1
+.venv\Scripts\python.exe -m alembic current
+```
+
+最后一条命令应显示`20260828_0003 (head)`。再启动后端并运行第9节演示脚本，即可验证从空数据卷到完整M1查询链路的恢复过程。
+
+### 11. 停止与数据保留
 
 ```powershell
 docker compose stop postgres

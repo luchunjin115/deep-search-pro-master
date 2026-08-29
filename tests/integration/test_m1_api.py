@@ -2,20 +2,30 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from dataclasses import dataclass
+from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
+from sqlalchemy.exc import OperationalError
 
 from app.api.dependencies import get_model_provider
 from app.core.config import Settings
 from app.core.errors import ProviderTimeoutError
 from app.db.session import DatabaseRuntime, create_database_runtime
 from app.llm.provider import ModelProvider
-from app.llm.schemas import ToolCallProposal, ToolDecisionRequest
+from app.llm.schemas import (
+    SearchInventoryToolCall,
+    ToolCallProposal,
+    ToolDecisionRequest,
+)
 from app.main import create_app
+from app.models.catalog import Product, ProductVariant
+from app.models.inventory import InventorySnapshot, Warehouse
 from app.models.runtime import Message, Thread
+from app.repositories.inventory import InventoryRepository
+from app.schemas.inventory import SearchInventoryInput
 from scripts.seed_m1 import seed_m1
 
 DE_EMAIL = "de.operator@demo.deepsearch.local"
@@ -253,3 +263,200 @@ def test_provider_timeout_maps_to_504_with_trace(api_fixture: ApiFixture) -> Non
     assert response.status_code == 504
     assert response.json()["error"]["code"] == "PROVIDER_ERROR"
     assert response.json()["trace_id"] is not None
+
+
+def test_zero_inventory_is_a_successful_fact_with_evidence(
+    api_fixture: ApiFixture,
+) -> None:
+    client = api_fixture.client
+    runtime = api_fixture.runtime
+
+    with runtime.session_factory.begin() as session:
+        snapshot = session.scalar(
+            select(InventorySnapshot)
+            .join(ProductVariant, ProductVariant.id == InventorySnapshot.variant_id)
+            .join(Warehouse, Warehouse.id == InventorySnapshot.warehouse_id)
+            .where(
+                ProductVariant.sku == "LR-TL-MUSH-OR01",
+                Warehouse.code == "DE-FRA",
+            )
+        )
+        assert snapshot is not None
+        original_quantities = (
+            snapshot.on_hand,
+            snapshot.reserved,
+            snapshot.unsellable,
+        )
+        snapshot.on_hand = 0
+        snapshot.reserved = 0
+        snapshot.unsellable = 0
+
+    try:
+        token = login(client)
+        thread_id = create_thread(client, token, "zero inventory")
+        response = client.post(
+            f"/api/v1/threads/{thread_id}/messages",
+            headers=bearer(token),
+            json={"message": "德国仓蘑菇灯还有多少可售库存？"},
+        )
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert "可售库存为0件" in payload["answer"]
+        assert len(payload["evidence"]) == 1
+        detail = client.get(
+            f"/api/v1/evidence/{payload['evidence'][0]['id']}",
+            headers=bearer(token),
+        )
+        assert detail.status_code == 200
+        assert detail.json()["structured_data"]["available"] == 0
+    finally:
+        with runtime.session_factory.begin() as session:
+            snapshot = session.scalar(
+                select(InventorySnapshot)
+                .join(ProductVariant, ProductVariant.id == InventorySnapshot.variant_id)
+                .join(Warehouse, Warehouse.id == InventorySnapshot.warehouse_id)
+                .where(
+                    ProductVariant.sku == "LR-TL-MUSH-OR01",
+                    Warehouse.code == "DE-FRA",
+                )
+            )
+            assert snapshot is not None
+            (
+                snapshot.on_hand,
+                snapshot.reserved,
+                snapshot.unsellable,
+            ) = original_quantities
+
+
+def test_missing_inventory_returns_404_without_business_evidence(
+    api_fixture: ApiFixture,
+) -> None:
+    class MissingInventoryProvider:
+        async def propose_tool_call(
+            self,
+            request: ToolDecisionRequest,
+        ) -> ToolCallProposal:
+            assert "search_inventory" in request.allowed_tool_names
+            return SearchInventoryToolCall(
+                name="search_inventory",
+                arguments=SearchInventoryInput(
+                    sku="MISSING-SKU-01",
+                    market_code="DE",
+                    warehouse_code="DE-FRA",
+                ),
+            )
+
+    async def override_provider() -> ModelProvider:
+        return MissingInventoryProvider()
+
+    client = api_fixture.client
+    application = api_fixture.application
+    application.dependency_overrides[get_model_provider] = override_provider
+    try:
+        token = login(client)
+        thread_id = create_thread(client, token, "missing inventory")
+        response = client.post(
+            f"/api/v1/threads/{thread_id}/messages",
+            headers=bearer(token),
+            json={"message": "查询德国仓MISSING-SKU-01的库存"},
+        )
+    finally:
+        application.dependency_overrides.pop(get_model_provider, None)
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "INVENTORY_NOT_FOUND"
+    assert response.json()["trace_id"] is not None
+    with api_fixture.runtime.session_factory() as session:
+        assert (
+            list(session.scalars(select(Message).where(Message.thread_id == thread_id)))
+            == []
+        )
+
+
+def test_ambiguous_product_returns_409_before_inventory_query(
+    api_fixture: ApiFixture,
+) -> None:
+    runtime = api_fixture.runtime
+    product_id = uuid4()
+    variant_id = uuid4()
+
+    with runtime.session_factory.begin() as session:
+        tenant_id = session.scalar(
+            select(Product.tenant_id)
+            .join(ProductVariant, ProductVariant.product_id == Product.id)
+            .where(ProductVariant.sku == "LR-TL-MUSH-OR01")
+        )
+        assert tenant_id is not None
+        session.add(
+            Product(
+                id=product_id,
+                tenant_id=tenant_id,
+                spu="M1-20-AMB-SPU",
+                name_zh="合成歧义测试台灯",
+                name_en="Synthetic Ambiguous Test Lamp",
+                aliases=["蘑菇灯"],
+                status="candidate",
+                is_demo=True,
+            )
+        )
+        session.add(
+            ProductVariant(
+                id=variant_id,
+                tenant_id=tenant_id,
+                product_id=product_id,
+                sku="M1-20-AMB-SKU",
+                status="candidate",
+            )
+        )
+
+    try:
+        token = login(api_fixture.client)
+        thread_id = create_thread(api_fixture.client, token, "ambiguous product")
+        response = api_fixture.client.post(
+            f"/api/v1/threads/{thread_id}/messages",
+            headers=bearer(token),
+            json={"message": "德国仓蘑菇灯还有多少可售库存？"},
+        )
+    finally:
+        with runtime.session_factory.begin() as session:
+            session.execute(delete(Product).where(Product.id == product_id))
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "AMBIGUOUS_PRODUCT"
+    assert response.json()["trace_id"] is not None
+
+
+def test_database_statement_timeout_maps_to_safe_504(
+    api_fixture: ApiFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StatementTimeout(Exception):
+        sqlstate = "57014"
+
+    def raise_timeout(
+        _repository: InventoryRepository,
+        *_arguments: object,
+        **_keywords: object,
+    ) -> list[object]:
+        raise OperationalError(
+            "SELECT secret_inventory FROM internal_table",
+            {},
+            StatementTimeout("canceling statement due to statement timeout"),
+        )
+
+    monkeypatch.setattr(InventoryRepository, "find_latest", raise_timeout)
+    token = login(api_fixture.client)
+    thread_id = create_thread(api_fixture.client, token, "database timeout")
+    response = api_fixture.client.post(
+        f"/api/v1/threads/{thread_id}/messages",
+        headers=bearer(token),
+        json={"message": "德国仓蘑菇灯还有多少可售库存？"},
+    )
+
+    assert response.status_code == 504
+    assert response.json()["error"]["code"] == "DATABASE_TIMEOUT"
+    assert response.json()["error"]["retryable"] is True
+    assert response.json()["trace_id"] is not None
+    assert "secret_inventory" not in response.text
+    assert "internal_table" not in response.text
