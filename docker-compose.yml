@@ -2,7 +2,10 @@ name: deep-search-pro
 
 services:
   postgres:
-    image: postgres:17.11-alpine3.24
+    image: deep-search-pro/postgres-pgvector:17.11-0.8.6
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
     container_name: deep-search-postgres
     restart: unless-stopped
     environment:

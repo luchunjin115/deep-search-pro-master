@@ -16,10 +16,28 @@ from app.schemas.common import (
     ToolMeta,
 )
 from app.schemas.evidence import EvidenceDetail, EvidenceSummary
+from app.schemas.files import (
+    FileListResponse,
+    FileRegistrationInput,
+    FileResponse,
+    FileStateUpdate,
+    FileUploadResponse,
+)
 from app.schemas.inventory import (
     InventoryIntent,
     InventoryResult,
     SearchInventoryInput,
+)
+from app.schemas.knowledge import (
+    DocumentAclGrantInput,
+    DocumentAclResponse,
+    DocumentCreateInput,
+    DocumentDetailResponse,
+    DocumentIndexStateUpdate,
+    DocumentParseStateUpdate,
+    DocumentResponse,
+    DocumentVersionCreateInput,
+    DocumentVersionResponse,
 )
 from app.schemas.product import (
     GetProductSpecInput,
@@ -33,10 +51,24 @@ __all__ = [
     "ChatSuccessResponse",
     "CreateThreadRequest",
     "CurrentUser",
+    "DocumentAclGrantInput",
+    "DocumentAclResponse",
+    "DocumentCreateInput",
+    "DocumentDetailResponse",
+    "DocumentIndexStateUpdate",
+    "DocumentParseStateUpdate",
+    "DocumentResponse",
+    "DocumentVersionCreateInput",
+    "DocumentVersionResponse",
     "ErrorDetail",
     "EvidenceDetail",
     "EvidenceSummary",
     "ExecutionSummary",
+    "FileListResponse",
+    "FileRegistrationInput",
+    "FileResponse",
+    "FileStateUpdate",
+    "FileUploadResponse",
     "GetProductSpecInput",
     "InventoryIntent",
     "InventoryResult",

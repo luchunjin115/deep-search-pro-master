@@ -1,6 +1,6 @@
 """Request-scoped dependencies shared by future M1 API routes."""
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from typing import Annotated
 
 from fastapi import Depends, Request
@@ -14,11 +14,51 @@ from app.db.session import DatabaseRuntime
 from app.llm.provider import ModelProvider, create_model_provider
 from app.repositories.conversation import ConversationRepository
 from app.repositories.evidence import EvidenceRepository
+from app.repositories.files import FileRepository
 from app.repositories.identity import IdentityRepository
 from app.schemas.auth import CurrentUser
 from app.services.auth import AuthService
 from app.services.conversation import ConversationService
 from app.services.evidence import EvidenceQueryService
+from app.services.files import FileService
+from app.services.storage import LocalStorageBackend, StorageBackend
+
+
+class RequestCompensations:
+    """Undo external writes if the surrounding database transaction fails."""
+
+    def __init__(self) -> None:
+        self._actions: list[Callable[[], None]] = []
+
+    def add(self, action: Callable[[], None]) -> None:
+        self._actions.append(action)
+
+    def rollback(self) -> None:
+        failure: Exception | None = None
+        for action in reversed(self._actions):
+            try:
+                action()
+            except Exception as error:  # noqa: BLE001 - cleanup actions are isolated.
+                failure = failure or error
+        if failure is not None:
+            raise failure
+
+
+async def get_request_compensations() -> AsyncGenerator[RequestCompensations, None]:
+    """Run Storage cleanup when endpoint work or the later DB commit fails."""
+
+    compensations = RequestCompensations()
+    try:
+        yield compensations
+    except Exception:
+        compensations.rollback()
+        raise
+
+
+RequestCompensationsDependency = Annotated[
+    RequestCompensations,
+    Depends(get_request_compensations, scope="function"),
+]
 
 
 def get_database_runtime(request: Request) -> DatabaseRuntime:
@@ -34,7 +74,10 @@ DatabaseRuntimeDependency = Annotated[
 ]
 
 
-async def get_db_session(request: Request) -> AsyncGenerator[Session, None]:
+async def get_db_session(
+    request: Request,
+    _compensations: RequestCompensationsDependency,
+) -> AsyncGenerator[Session, None]:
     """Keep one sync SQLAlchemy Session on the async request's single thread."""
 
     session = get_database_runtime(request).session_factory()
@@ -66,6 +109,41 @@ def get_app_settings(request: Request) -> Settings:
 
 
 AppSettings = Annotated[Settings, Depends(get_app_settings)]
+
+
+def get_storage_backend(request: Request, settings: AppSettings) -> StorageBackend:
+    """Lazily create the configured backend without import-time filesystem writes."""
+
+    backend: StorageBackend | None = request.app.state.storage_backend
+    if backend is None:
+        backend = LocalStorageBackend(
+            settings.local_storage_root,
+            chunk_size_bytes=settings.upload_stream_chunk_size_bytes,
+        )
+        request.app.state.storage_backend = backend
+    return backend
+
+
+StorageBackendDependency = Annotated[
+    StorageBackend,
+    Depends(get_storage_backend),
+]
+
+
+def get_file_service(
+    session: DatabaseSession,
+    settings: AppSettings,
+    storage: StorageBackendDependency,
+) -> FileService:
+    """Build one file service inside the compensating request transaction."""
+
+    return FileService(
+        FileRepository(session, settings.database_statement_timeout_ms),
+        storage,
+    )
+
+
+FileServiceDependency = Annotated[FileService, Depends(get_file_service)]
 
 
 def get_auth_service(

@@ -1,0 +1,259 @@
+{
+  "version": "m2-v1",
+  "random_seed": 20260829,
+  "data_classification": "synthetic_demo_data",
+  "disclaimer": "演示资料，不构成法律、认证、采购或经营意见。",
+  "seed_definition_hash": "sha256:80f911f2b0cd316f6933bf6b1079a6d2c3bb73e01602d14bc91da129c651d9c9",
+  "seeded_row_counts": {
+    "files": 5,
+    "documents": 5,
+    "document_versions": 5,
+    "document_acl": 5
+  },
+  "m1_guard": {
+    "sku": "LR-TL-MUSH-OR01",
+    "warehouse_code": "DE-FRA",
+    "available": 125,
+    "synthetic_data": true
+  },
+  "documents": [
+    {
+      "key": "mushroom_lamp_manual",
+      "file_id": "9f10e522-15e8-5da4-88cb-7288f9388186",
+      "document_id": "168ed147-e52b-537a-8087-7e3c51a9aecd",
+      "version_id": "95724983-e740-5522-9c4b-3179c764eb44",
+      "original_name": "m2-v1_蘑菇灯产品说明书.pdf",
+      "format": "pdf",
+      "mime_type": "application/pdf",
+      "size_bytes": 4308,
+      "sha256": "3cd756914910113085c5ded10b2eb96af09016c14e46a4c711c9360cce27b304",
+      "title": "LUMORIVA 蘑菇灯产品说明书",
+      "document_type": "product_manual",
+      "language": "zh-CN",
+      "market": null,
+      "access_level": "tenant",
+      "acl": [],
+      "structure": {
+        "page_count": 2
+      },
+      "golden_facts": [
+        {
+          "question": "蘑菇灯的额定电压是多少？",
+          "answer": "220 V",
+          "locator": {
+            "page_number": 1
+          }
+        },
+        {
+          "question": "清洁蘑菇灯前需要做什么？",
+          "answer": "先拔下插头，再用干燥无绒软布擦拭。",
+          "locator": {
+            "page_number": 2
+          }
+        }
+      ]
+    },
+    {
+      "key": "quality_inspection_sop",
+      "file_id": "44bdff2d-2afb-516c-ae27-361b57e4b25f",
+      "document_id": "1d79ac25-bfa5-57cd-b46b-da16968a9c10",
+      "version_id": "c02c82a3-e763-528b-b3c9-639fc1d3aa35",
+      "original_name": "m2-v1_蘑菇灯质检SOP.docx",
+      "format": "docx",
+      "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "size_bytes": 39589,
+      "sha256": "0e79f4d031ed5d59f9e4a61339268cfa9511ddfdc8c8af8496572721b084d8cb",
+      "title": "蘑菇灯到货质检 SOP",
+      "document_type": "quality_sop",
+      "language": "zh-CN",
+      "market": null,
+      "access_level": "restricted",
+      "acl": [
+        {
+          "subject_type": "role",
+          "role_name": "product_scout"
+        },
+        {
+          "subject_type": "role",
+          "role_name": "amazon_operator"
+        }
+      ],
+      "structure": {
+        "heading_count": 4,
+        "table_count": 1
+      },
+      "golden_facts": [
+        {
+          "question": "1至500件的批次需要抽检多少件？",
+          "answer": "20件",
+          "locator": {
+            "heading_path": [
+              "2. 抽样规则"
+            ],
+            "paragraph_number": 10
+          }
+        },
+        {
+          "question": "发现裸露导线时如何处置？",
+          "answer": "判为关键缺陷，立即隔离整批并升级质量负责人。",
+          "locator": {
+            "heading_path": [
+              "3. 缺陷判定与处置"
+            ],
+            "table_number": 1,
+            "row_number": 2,
+            "column_number": 3
+          }
+        }
+      ]
+    },
+    {
+      "key": "de_compliance_checklist",
+      "file_id": "f093546b-9a24-5f89-b33e-9370396416ec",
+      "document_id": "b15eee83-e8a6-58f1-9134-438b7c104081",
+      "version_id": "1960b875-7d17-574e-8353-c2b7e7034b9f",
+      "original_name": "m2-v1_德国灯具合规演示清单.docx",
+      "format": "docx",
+      "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "size_bytes": 39525,
+      "sha256": "7d44adcd3a5a4621d3d9119d80a6be6ddb1917de8d3e277498d015ef02a0b707",
+      "title": "德国灯具合规演示清单",
+      "document_type": "compliance_checklist",
+      "language": "zh-CN",
+      "market": "DE",
+      "access_level": "restricted",
+      "acl": [
+        {
+          "subject_type": "market",
+          "market_code": "DE"
+        }
+      ],
+      "structure": {
+        "heading_count": 3,
+        "table_count": 1
+      },
+      "golden_facts": [
+        {
+          "question": "这份合规清单能否作为法律或认证意见？",
+          "answer": "不能；它是演示资料，不构成法律或认证意见。",
+          "locator": {
+            "heading_path": [
+              "1. 资料性质"
+            ],
+            "paragraph_number": 7
+          }
+        },
+        {
+          "question": "WEEE信息的演示状态是什么？",
+          "answer": "缺少正式证明",
+          "locator": {
+            "heading_path": [
+              "2. 德国市场演示检查项"
+            ],
+            "table_number": 1,
+            "row_number": 4,
+            "column_number": 3
+          }
+        }
+      ]
+    },
+    {
+      "key": "supplier_quotes",
+      "file_id": "511464f3-04f1-5ffb-a32d-f594808b901c",
+      "document_id": "362971db-7038-5cb5-8535-aab012bc3a6d",
+      "version_id": "c156dc9d-84f0-5aa9-bf4e-405d95b3c310",
+      "original_name": "m2-v1_蘑菇灯供应商报价.xlsx",
+      "format": "xlsx",
+      "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "size_bytes": 6662,
+      "sha256": "6d6937c4bf9de4c5a2397616986267e8bfced0dad82964dfd76c8e8e8d65952c",
+      "title": "蘑菇灯供应商合成报价",
+      "document_type": "supplier_quotes",
+      "language": "zh-CN",
+      "market": null,
+      "access_level": "restricted",
+      "acl": [
+        {
+          "subject_type": "role",
+          "role_name": "product_scout"
+        }
+      ],
+      "structure": {
+        "sheet_names": [
+          "供应商报价",
+          "报价说明"
+        ],
+        "row_counts": {
+          "供应商报价": 4,
+          "报价说明": 5
+        }
+      },
+      "golden_facts": [
+        {
+          "question": "合成供应商B的含税单价是多少？",
+          "answer": "20.9 EUR",
+          "locator": {
+            "sheet_name": "供应商报价",
+            "cell_range": "A3:H3",
+            "row_start": 3,
+            "row_end": 3
+          }
+        },
+        {
+          "question": "合成供应商A的单件落地成本公式是什么？",
+          "answer": "=F2+G2",
+          "locator": {
+            "sheet_name": "供应商报价",
+            "cell_range": "H2",
+            "row_number": 2,
+            "column_number": 8
+          }
+        }
+      ]
+    },
+    {
+      "key": "monthly_operations",
+      "file_id": "f00a6d14-faea-5d62-8dbe-6e9c2ec94a31",
+      "document_id": "8910d105-fc85-51ca-acda-5519b22a7fc8",
+      "version_id": "c532dcfe-682a-52f0-9826-e54240522864",
+      "original_name": "m2-v1_蘑菇灯月度运营数据.csv",
+      "format": "csv",
+      "mime_type": "text/csv",
+      "size_bytes": 623,
+      "sha256": "a5e10535f6b94b6a2d8109619b87c8c7f2309d80e7ed190f7a1533c837c312b3",
+      "title": "蘑菇灯月度合成运营数据",
+      "document_type": "operations_table",
+      "language": "zh-CN",
+      "market": null,
+      "access_level": "restricted",
+      "acl": [
+        {
+          "subject_type": "role",
+          "role_name": "amazon_operator"
+        }
+      ],
+      "structure": {
+        "encoding": "utf-8-sig",
+        "row_count": 15
+      },
+      "golden_facts": [
+        {
+          "question": "2026年6月德国市场销量是多少？",
+          "answer": "139件",
+          "locator": {
+            "row_start": 7,
+            "row_end": 7
+          }
+        },
+        {
+          "question": "法国市场运营数据位于哪些行？",
+          "answer": "第8至13行",
+          "locator": {
+            "row_start": 8,
+            "row_end": 13
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -356,6 +356,146 @@ class EvidenceReadError(ApplicationError):
         )
 
 
+class FileNotFoundError(ApplicationError):
+    """A file is absent, deleted, cross-tenant, or not authorized."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "FILE_NOT_FOUND",
+            "未找到可访问的文件",
+            retryable=False,
+            field="file_id",
+        )
+
+
+class DocumentNotFoundError(ApplicationError):
+    """A document is absent, deleted, cross-tenant, or not authorized."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "DOCUMENT_NOT_FOUND",
+            "未找到可访问的文档",
+            retryable=False,
+            field="document_id",
+        )
+
+
+class FileStateConflictError(ApplicationError):
+    """The requested file-state transition is not part of the M2 state machine."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "FILE_STATE_CONFLICT",
+            "文件当前状态不允许执行该操作",
+            retryable=False,
+            field="status",
+        )
+
+
+class DocumentStateConflictError(ApplicationError):
+    """A document version cannot make the requested state transition."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "DOCUMENT_STATE_CONFLICT",
+            "文档版本当前状态不允许执行该操作",
+            retryable=False,
+            field="status",
+        )
+
+
+class DocumentParsingError(ApplicationError):
+    """One claimed document parse failed without exposing private internals."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "INTERNAL_ERROR",
+            "文档解析未能完成，请稍后重试",
+            retryable=True,
+        )
+
+
+class DocumentVersionConflictError(ApplicationError):
+    """A document already contains the same immutable content revision."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "DOCUMENT_VERSION_CONFLICT",
+            "该文档已存在相同内容版本",
+            retryable=False,
+            field="file_id",
+        )
+
+
+class DocumentAclConflictError(ApplicationError):
+    """An identical explicit document grant already exists."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "DOCUMENT_ACL_CONFLICT",
+            "该文档授权已存在",
+            retryable=False,
+            field="subject_type",
+        )
+
+
+class FileMetadataError(ApplicationError):
+    """Trusted Storage facts and normalized file metadata disagree."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "VALIDATION_ERROR",
+            "文件元数据格式无效",
+            retryable=False,
+            field="file",
+        )
+
+
+class FileUploadValidationError(ApplicationError):
+    """One multipart file violates the bounded M2 upload contract."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "VALIDATION_ERROR",
+            "上传文件格式、类型或大小无效",
+            retryable=False,
+            field="files",
+        )
+
+
+class FileStorageError(ApplicationError):
+    """The managed binary object could not be safely written or opened."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "INTERNAL_ERROR",
+            "文件存储暂时无法完成操作",
+            retryable=True,
+        )
+
+
+class KnowledgePersistenceError(ApplicationError):
+    """Knowledge metadata could not be read or persisted safely."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "INTERNAL_ERROR",
+            "知识库元数据处理失败",
+            retryable=True,
+        )
+
+
+class KnowledgeDataContractError(ApplicationError):
+    """Stored knowledge metadata cannot form a safe response."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "INTERNAL_ERROR",
+            "知识库元数据不符合安全合同",
+            retryable=False,
+        )
+
+
 class RequestTransactionError(ApplicationError):
     """The request transaction failed before its response was sent."""
 

@@ -1,0 +1,6 @@
+**
+!docker/
+!docker/postgres/
+!docker/postgres/Dockerfile
+!docker/postgres/init/
+!docker/postgres/init/001-enable-vector.sql

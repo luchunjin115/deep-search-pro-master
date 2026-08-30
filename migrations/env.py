@@ -9,6 +9,9 @@ from app.core.config import Settings
 from app.db.base import Base
 from app.models import (
     AgentRun,
+    Document,
+    DocumentAcl,
+    DocumentVersion,
     Evidence,
     InventorySnapshot,
     Message,
@@ -16,6 +19,7 @@ from app.models import (
     ProductSpec,
     ProductVariant,
     Role,
+    StoredFile,
     Tenant,
     Thread,
     ToolCall,
@@ -45,6 +49,10 @@ _models = (
     AgentRun,
     ToolCall,
     Evidence,
+    StoredFile,
+    Document,
+    DocumentVersion,
+    DocumentAcl,
 )
 target_metadata = Base.metadata
 

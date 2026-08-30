@@ -1,0 +1,317 @@
+{
+  "version": "m2-v1",
+  "random_seed": 20260829,
+  "data_classification": "synthetic_demo_data",
+  "storage_date": "2026-08-29",
+  "tenant_name": "LUMORIVA M1 合成演示公司",
+  "owner_email": "owner@demo.deepsearch.local",
+  "product_sku": "LR-TL-MUSH-OR01",
+  "disclaimer": "演示资料，不构成法律、认证、采购或经营意见。",
+  "documents": [
+    {
+      "key": "mushroom_lamp_manual",
+      "original_name": "m2-v1_蘑菇灯产品说明书.pdf",
+      "format": "pdf",
+      "title": "LUMORIVA 蘑菇灯产品说明书",
+      "document_type": "product_manual",
+      "language": "zh-CN",
+      "market": null,
+      "link_product": true,
+      "access_level": "tenant",
+      "acl": [],
+      "content": {
+        "pages": [
+          {
+            "title": "LUMORIVA 蘑菇灯产品说明书",
+            "sections": [
+              {
+                "heading": "产品识别",
+                "lines": [
+                  "产品名称：橙色复古蘑菇台灯",
+                  "SKU：LR-TL-MUSH-OR01",
+                  "适用场景：室内干燥环境中的桌面辅助照明"
+                ]
+              },
+              {
+                "heading": "合成规格",
+                "lines": [
+                  "额定电压：220 V",
+                  "灯体高度：30 cm",
+                  "灯罩直径：25 cm",
+                  "颜色：橙色",
+                  "建议光源：E27 LED，最大 8 W"
+                ]
+              }
+            ]
+          },
+          {
+            "title": "安装、使用与维护",
+            "sections": [
+              {
+                "heading": "首次使用",
+                "lines": [
+                  "将台灯放在平稳、干燥且远离热源的桌面。",
+                  "确认电源断开后再安装或更换光源。",
+                  "通电前检查电源线、插头和灯座没有可见损伤。"
+                ]
+              },
+              {
+                "heading": "清洁与异常处理",
+                "lines": [
+                  "清洁前拔下插头，使用干燥无绒软布擦拭。",
+                  "不得使用滴水湿布、喷雾清洁剂或浸泡方式。",
+                  "出现异味、闪烁或电源线破损时立即停用并隔离。"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "golden_facts": [
+        {
+          "question": "蘑菇灯的额定电压是多少？",
+          "answer": "220 V",
+          "locator": {"page_number": 1}
+        },
+        {
+          "question": "清洁蘑菇灯前需要做什么？",
+          "answer": "先拔下插头，再用干燥无绒软布擦拭。",
+          "locator": {"page_number": 2}
+        }
+      ]
+    },
+    {
+      "key": "quality_inspection_sop",
+      "original_name": "m2-v1_蘑菇灯质检SOP.docx",
+      "format": "docx",
+      "title": "蘑菇灯到货质检 SOP",
+      "document_type": "quality_sop",
+      "language": "zh-CN",
+      "market": null,
+      "link_product": true,
+      "access_level": "restricted",
+      "acl": [
+        {"subject_type": "role", "role_name": "product_scout"},
+        {"subject_type": "role", "role_name": "amazon_operator"}
+      ],
+      "content": {
+        "sections": [
+          {
+            "heading": "1. 目的与范围",
+            "level": 1,
+            "paragraphs": [
+              "本SOP用于合成演示批次LR-TL-MUSH-OR01的到货抽检，不替代真实企业质量体系。",
+              "适用对象为灯体、灯罩、电源线、插头、灯座和包装标签。"
+            ]
+          },
+          {
+            "heading": "2. 抽样规则",
+            "level": 1,
+            "paragraphs": [
+              "每批1至500件时抽取20件；超过500件的批次应由质量负责人另行批准抽样方案。",
+              "抽样应覆盖不同外箱位置，不得只检查最上层产品。"
+            ]
+          },
+          {
+            "heading": "3. 缺陷判定与处置",
+            "level": 1,
+            "paragraphs": [
+              "合成演示放行规则：关键缺陷必须为0，主要缺陷不得超过1件。"
+            ],
+            "table": {
+              "headers": ["缺陷等级", "合成判定示例", "处置要求"],
+              "rows": [
+                ["关键缺陷", "裸露导线、插头破损或可触及带电部件", "立即隔离整批并升级质量负责人"],
+                ["主要缺陷", "灯罩明显变形、开关失效或标签缺失", "记录数量；超过1件则整批待审"],
+                ["次要缺陷", "不影响使用的轻微外观痕迹", "拍照记录并按合成规则复核"]
+              ],
+              "widths_dxa": [1800, 3780, 3780]
+            }
+          },
+          {
+            "heading": "4. 记录要求",
+            "level": 1,
+            "paragraphs": [
+              "记录批次号、抽样数量、缺陷等级、照片编号、判定人和判定日期。",
+              "本文件和所有数值均为合成演示内容。"
+            ]
+          }
+        ]
+      },
+      "golden_facts": [
+        {
+          "question": "1至500件的批次需要抽检多少件？",
+          "answer": "20件",
+          "locator": {"heading_path": ["2. 抽样规则"], "paragraph_number": 10}
+        },
+        {
+          "question": "发现裸露导线时如何处置？",
+          "answer": "判为关键缺陷，立即隔离整批并升级质量负责人。",
+          "locator": {"heading_path": ["3. 缺陷判定与处置"], "table_number": 1, "row_number": 2, "column_number": 3}
+        }
+      ]
+    },
+    {
+      "key": "de_compliance_checklist",
+      "original_name": "m2-v1_德国灯具合规演示清单.docx",
+      "format": "docx",
+      "title": "德国灯具合规演示清单",
+      "document_type": "compliance_checklist",
+      "language": "zh-CN",
+      "market": "DE",
+      "link_product": true,
+      "access_level": "restricted",
+      "acl": [
+        {"subject_type": "market", "market_code": "DE"}
+      ],
+      "content": {
+        "sections": [
+          {
+            "heading": "1. 资料性质",
+            "level": 1,
+            "paragraphs": [
+              "演示资料，不构成法律或认证意见。清单项目仅用于测试知识检索、权限和引用定位。",
+              "真实销售前必须由具备资质的专业人员依据产品结构、供应链和最新法规复核。"
+            ]
+          },
+          {
+            "heading": "2. 德国市场演示检查项",
+            "level": 1,
+            "paragraphs": [
+              "以下状态只是合成样本，不表示产品已经获得任何认证或注册。"
+            ],
+            "table": {
+              "headers": ["检查项", "合成演示资料", "演示状态"],
+              "rows": [
+                ["CE相关技术资料", "合成符合性声明草案与测试报告索引", "待专业复核"],
+                ["RoHS材料信息", "合成供应商材料声明", "待实验室确认"],
+                ["WEEE信息", "合成责任主体与注册信息占位记录", "缺少正式证明"],
+                ["德语标签与说明", "型号、电气参数和安全提示的德语版本", "待翻译复核"]
+              ],
+              "widths_dxa": [2100, 4560, 2700]
+            }
+          },
+          {
+            "heading": "3. 停止条件",
+            "level": 1,
+            "paragraphs": [
+              "如果责任主体、适用标准或关键测试证据不明确，应停止把产品描述为已合规，并提交专业复核。"
+            ]
+          }
+        ]
+      },
+      "golden_facts": [
+        {
+          "question": "这份合规清单能否作为法律或认证意见？",
+          "answer": "不能；它是演示资料，不构成法律或认证意见。",
+          "locator": {"heading_path": ["1. 资料性质"], "paragraph_number": 7}
+        },
+        {
+          "question": "WEEE信息的演示状态是什么？",
+          "answer": "缺少正式证明",
+          "locator": {"heading_path": ["2. 德国市场演示检查项"], "table_number": 1, "row_number": 4, "column_number": 3}
+        }
+      ]
+    },
+    {
+      "key": "supplier_quotes",
+      "original_name": "m2-v1_蘑菇灯供应商报价.xlsx",
+      "format": "xlsx",
+      "title": "蘑菇灯供应商合成报价",
+      "document_type": "supplier_quotes",
+      "language": "zh-CN",
+      "market": null,
+      "link_product": true,
+      "access_level": "restricted",
+      "acl": [
+        {"subject_type": "role", "role_name": "product_scout"}
+      ],
+      "content": {
+        "sheets": [
+          {
+            "name": "供应商报价",
+            "headers": ["供应商", "SKU", "币种", "MOQ", "交期天数", "含税单价", "单件运费", "单件落地成本"],
+            "rows": [
+              ["合成供应商A", "LR-TL-MUSH-OR01", "EUR", 300, 35, 21.8, 3.2, null],
+              ["合成供应商B", "LR-TL-MUSH-OR01", "EUR", 500, 28, 20.9, 4.1, null],
+              ["合成供应商C", "LR-TL-MUSH-OR01", "EUR", 200, 42, 23.4, 2.8, null]
+            ],
+            "formulas": [
+              {"coordinate": "H2", "formula": "=F2+G2"},
+              {"coordinate": "H3", "formula": "=F3+G3"},
+              {"coordinate": "H4", "formula": "=F4+G4"}
+            ],
+            "widths": [18, 22, 10, 10, 12, 12, 12, 16]
+          },
+          {
+            "name": "报价说明",
+            "headers": ["字段", "内容"],
+            "rows": [
+              ["版本", "m2-v1"],
+              ["数据性质", "全部内容均为合成演示数据"],
+              ["有效期", "合成报价有效至2026-09-30"],
+              ["免责声明", "演示资料，不构成采购或经营意见"]
+            ],
+            "formulas": [],
+            "widths": [16, 48]
+          }
+        ]
+      },
+      "golden_facts": [
+        {
+          "question": "合成供应商B的含税单价是多少？",
+          "answer": "20.9 EUR",
+          "locator": {"sheet_name": "供应商报价", "cell_range": "A3:H3", "row_start": 3, "row_end": 3}
+        },
+        {
+          "question": "合成供应商A的单件落地成本公式是什么？",
+          "answer": "=F2+G2",
+          "locator": {"sheet_name": "供应商报价", "cell_range": "H2", "row_number": 2, "column_number": 8}
+        }
+      ]
+    },
+    {
+      "key": "monthly_operations",
+      "original_name": "m2-v1_蘑菇灯月度运营数据.csv",
+      "format": "csv",
+      "title": "蘑菇灯月度合成运营数据",
+      "document_type": "operations_table",
+      "language": "zh-CN",
+      "market": null,
+      "link_product": true,
+      "access_level": "restricted",
+      "acl": [
+        {"subject_type": "role", "role_name": "amazon_operator"}
+      ],
+      "content": {
+        "headers": ["月份", "市场", "SKU", "销量", "广告花费EUR", "退货件数"],
+        "rows": [
+          ["2026-01", "DE", "LR-TL-MUSH-OR01", 82, 410, 3],
+          ["2026-02", "DE", "LR-TL-MUSH-OR01", 91, 445, 4],
+          ["2026-03", "DE", "LR-TL-MUSH-OR01", 104, 520, 4],
+          ["2026-04", "DE", "LR-TL-MUSH-OR01", 118, 590, 5],
+          ["2026-05", "DE", "LR-TL-MUSH-OR01", 126, 630, 6],
+          ["2026-06", "DE", "LR-TL-MUSH-OR01", 139, 710, 7],
+          ["2026-01", "FR", "LR-TL-MUSH-OR01", 45, 260, 2],
+          ["2026-02", "FR", "LR-TL-MUSH-OR01", 49, 275, 2],
+          ["2026-03", "FR", "LR-TL-MUSH-OR01", 55, 310, 3],
+          ["2026-04", "FR", "LR-TL-MUSH-OR01", 63, 350, 3],
+          ["2026-05", "FR", "LR-TL-MUSH-OR01", 67, 380, 4],
+          ["2026-06", "FR", "LR-TL-MUSH-OR01", 72, 405, 4]
+        ]
+      },
+      "golden_facts": [
+        {
+          "question": "2026年6月德国市场销量是多少？",
+          "answer": "139件",
+          "locator": {"row_start": 7, "row_end": 7}
+        },
+        {
+          "question": "法国市场运营数据位于哪些行？",
+          "answer": "第8至13行",
+          "locator": {"row_start": 8, "row_end": 13}
+        }
+      ]
+    }
+  ]
+}

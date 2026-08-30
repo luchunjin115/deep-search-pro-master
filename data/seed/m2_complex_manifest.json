@@ -1,0 +1,295 @@
+{
+  "version": "m2-complex-v1",
+  "random_seed": 20260830,
+  "data_classification": "synthetic_demo_data",
+  "disclaimer": "复杂文档评估资料，仅含合成演示数据，不构成法律、认证、采购或经营意见。",
+  "seed_definition_hash": "sha256:38c7d8a012609a4474812f4de1d4b2694f28bd4a79cde2f11f6cb3dabbfc8a1c",
+  "seeded_row_counts": {
+    "files": 5,
+    "documents": 5,
+    "document_versions": 5,
+    "document_acl": 4
+  },
+  "documents": [
+    {
+      "key": "scanned_receiving_ticket",
+      "file_id": "fd0208bb-7382-5ff8-bbe2-15cdd47a695c",
+      "document_id": "7d8b57f2-e865-5e2e-adda-0eb18fc3568c",
+      "version_id": "a4788519-b916-5dba-ae90-3d887958c513",
+      "original_name": "m2-complex-v1_扫描入库单.pdf",
+      "format": "pdf",
+      "mime_type": "application/pdf",
+      "size_bytes": 89132,
+      "sha256": "8f58bd89a2bc55b11615b56dda544bf9ec64ba5522ef721a6f72390a36382cbc",
+      "title": "扫描入库单",
+      "document_type": "receiving_ticket",
+      "language": "zh-CN",
+      "market": "DE",
+      "access_level": "restricted",
+      "acl": [
+        {
+          "subject_type": "market",
+          "market_code": "DE"
+        }
+      ],
+      "expected_route": "docling",
+      "requires_ocr": true,
+      "complexity_tags": [
+        "image_only",
+        "scanned_pdf",
+        "ocr_required"
+      ],
+      "structure": {
+        "page_count": 2
+      },
+      "golden_facts": [
+        {
+          "question": "扫描入库单的批次号是什么？",
+          "answer": "BATCH-SCAN-42",
+          "locator": {
+            "page_number": 1
+          }
+        },
+        {
+          "question": "扫描质检记录的抽样数量是多少？",
+          "answer": "20 PCS",
+          "locator": {
+            "page_number": 2
+          }
+        }
+      ]
+    },
+    {
+      "key": "two_column_market_brief",
+      "file_id": "d6e13985-54b6-5af0-9ec4-950e87115247",
+      "document_id": "3f72760a-c69c-5bb1-8535-56a989a7d35f",
+      "version_id": "1783b80a-1b41-575d-b4b5-0cdff17a1dd6",
+      "original_name": "m2-complex-v1_双栏市场简报.pdf",
+      "format": "pdf",
+      "mime_type": "application/pdf",
+      "size_bytes": 4355,
+      "sha256": "67aa45d8bf2f85e71cd1a784a19bb56d83293b70121b7a0fa05b7b35eed7ad48",
+      "title": "双栏市场简报",
+      "document_type": "market_brief",
+      "language": "zh-CN",
+      "market": "DE",
+      "access_level": "tenant",
+      "acl": [],
+      "expected_route": "docling",
+      "requires_ocr": false,
+      "complexity_tags": [
+        "two_column",
+        "reading_order",
+        "repeated_header_footer"
+      ],
+      "structure": {
+        "page_count": 2
+      },
+      "golden_facts": [
+        {
+          "question": "双栏简报建议的每日广告预算上限是多少？",
+          "answer": "18 EUR",
+          "locator": {
+            "page_number": 1
+          }
+        },
+        {
+          "question": "双栏简报中的补货触发线是多少？",
+          "answer": "80件",
+          "locator": {
+            "page_number": 2
+          }
+        }
+      ]
+    },
+    {
+      "key": "merged_header_cost_table",
+      "file_id": "9c5ea4e0-a090-52f6-a02f-638123720db9",
+      "document_id": "2608032a-ac2c-539d-9917-667ccd5e4ed4",
+      "version_id": "dbcc3bdb-58a1-5b43-a0e1-b5b268ead99a",
+      "original_name": "m2-complex-v1_合并表头成本表.pdf",
+      "format": "pdf",
+      "mime_type": "application/pdf",
+      "size_bytes": 3135,
+      "sha256": "ba0670b5c1317bfba90809cace71077dba08dabe8277a373696e575d3fc70f26",
+      "title": "合并表头成本表",
+      "document_type": "cost_table",
+      "language": "zh-CN",
+      "market": null,
+      "access_level": "restricted",
+      "acl": [
+        {
+          "subject_type": "role",
+          "role_name": "product_scout"
+        }
+      ],
+      "expected_route": "docling",
+      "requires_ocr": false,
+      "complexity_tags": [
+        "merged_header",
+        "borderless_table",
+        "table_semantics"
+      ],
+      "structure": {
+        "page_count": 1,
+        "table_count": 1,
+        "header_rows": 2
+      },
+      "golden_facts": [
+        {
+          "question": "合成供应商C的落地成本是多少？",
+          "answer": "20.90 EUR/件",
+          "locator": {
+            "page_number": 1,
+            "table_number": 1,
+            "row_number": 4,
+            "column_number": 5
+          }
+        },
+        {
+          "question": "成本表中物流成本最低的是哪家供应商？",
+          "answer": "合成供应商B，1.20 EUR/件",
+          "locator": {
+            "page_number": 1,
+            "table_number": 1,
+            "row_number": 3,
+            "column_number": 3
+          }
+        }
+      ]
+    },
+    {
+      "key": "visual_quality_notice",
+      "file_id": "12ca9a3a-ee6a-5054-a58d-12045f6c2fc2",
+      "document_id": "47d76531-0e7b-50ac-8e6e-62957b48800f",
+      "version_id": "1c26cd12-12b0-5813-8eb1-67713d3ce10f",
+      "original_name": "m2-complex-v1_图文质检通知.docx",
+      "format": "docx",
+      "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "size_bytes": 54973,
+      "sha256": "e0b85158044ae5577830790897df405a91c6e035601bd83db32d0ce1f149fcd9",
+      "title": "图文质检通知",
+      "document_type": "quality_notice",
+      "language": "zh-CN",
+      "market": null,
+      "access_level": "restricted",
+      "acl": [
+        {
+          "subject_type": "role",
+          "role_name": "amazon_operator"
+        }
+      ],
+      "expected_route": "docling",
+      "requires_ocr": true,
+      "complexity_tags": [
+        "header_footer",
+        "image_text",
+        "body_visual"
+      ],
+      "structure": {
+        "section_count": 2,
+        "visual_regions": [
+          "header",
+          "footer",
+          "body_image"
+        ]
+      },
+      "golden_facts": [
+        {
+          "question": "图文质检通知页眉中的控制代码是什么？",
+          "answer": "QC-VISUAL-17",
+          "locator": {
+            "page_number": 1
+          }
+        },
+        {
+          "question": "图片质检卡要求隔离多少件？",
+          "answer": "12 PCS",
+          "locator": {
+            "page_number": 1
+          }
+        }
+      ]
+    },
+    {
+      "key": "multi_region_replenishment",
+      "file_id": "f3f7af96-63fb-589c-8b18-7819082cd094",
+      "document_id": "493e435b-9755-5440-8b89-73084809f869",
+      "version_id": "842d8c53-8253-5473-b97c-522dd3961591",
+      "original_name": "m2-complex-v1_多区域补货测算.xlsx",
+      "format": "xlsx",
+      "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "size_bytes": 7009,
+      "sha256": "64a226e84836f8f58ab4f0f6538436777a5395c1c8cfcfd9d0db5f0bab034f0d",
+      "title": "多区域补货测算",
+      "document_type": "replenishment_workbook",
+      "language": "zh-CN",
+      "market": null,
+      "access_level": "restricted",
+      "acl": [
+        {
+          "subject_type": "role",
+          "role_name": "product_scout"
+        }
+      ],
+      "expected_route": "docling",
+      "requires_ocr": false,
+      "complexity_tags": [
+        "merged_multilevel_header",
+        "multiple_regions",
+        "formulas"
+      ],
+      "structure": {
+        "sheet_names": [
+          "补货测算",
+          "参数说明"
+        ],
+        "row_counts": {
+          "补货测算": 10,
+          "参数说明": 4
+        },
+        "merged_ranges": {
+          "补货测算": [
+            "A1:A2",
+            "B1:D1",
+            "E1:G1",
+            "A7:G7"
+          ],
+          "参数说明": [
+            "A1:C1"
+          ]
+        },
+        "formula_cells": [
+          "补货测算!D3",
+          "补货测算!G3",
+          "补货测算!D4",
+          "补货测算!G4",
+          "补货测算!D9",
+          "补货测算!D10"
+        ]
+      },
+      "golden_facts": [
+        {
+          "question": "橙色蘑菇灯建议补货多少件？",
+          "answer": "100件",
+          "locator": {
+            "sheet_name": "补货测算",
+            "cell_range": "F3",
+            "row_number": 3,
+            "column_number": 6
+          }
+        },
+        {
+          "question": "法国市场总提前期公式是什么？",
+          "answer": "=B10+C10",
+          "locator": {
+            "sheet_name": "补货测算",
+            "cell_range": "D10",
+            "row_number": 10,
+            "column_number": 4
+          }
+        }
+      ]
+    }
+  ]
+}

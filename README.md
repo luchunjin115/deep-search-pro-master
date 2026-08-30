@@ -1,12 +1,149 @@
-# M1库存查询垂直切片（已完成）
+# Deep Search Pro
 
-> 当前项目已经完成“库存查询垂直切片”M1-01至M1-21。
->
-> M1新后端入口是`app.main:app`；下方原README暂时保留，用于说明旧`agent/api/tools`原型，不能作为M1启动说明。
+> 本README只记录本地运行、配置和功能使用方法。正式项目进度请查看[`docs/PROJECT_PROGRESS.md`](docs/PROJECT_PROGRESS.md)，阶段实施记录请查看[`docs/progress/`](docs/progress/)。
 
-## M1当前可运行范围
+## 本地知识库后端
 
-截至M1-21，项目具备：
+### 配置与依赖
+
+知识库链路共同使用的参数集中在`app/core/config.py`：
+
+- 本地Storage根目录与模型缓存目录；
+- PDF、DOCX、XLSX、CSV允许列表、25 MiB单文件上限和流式读取块大小；
+- BGE-M3 1024维Embedding与BGE Reranker的模型名称、Fake默认实现、CPU批量和“只读本地缓存”开关；
+- 600 token目标块、100 token重叠、Dense/Lexical各30条、RRF `k=60`和最终8条候选；
+- 上传、PDF/DOCX/XLSX/CSV解析、PostgreSQL向量类型、中文分词和BGE Provider将使用的直接依赖范围。
+
+这些参数只是合同。`Settings`不会创建目录、读取文件、加载模型或下载权重；日常默认`EMBEDDING_BACKEND=fake`、`RERANKER_BACKEND=fake`且`MODEL_LOCAL_FILES_ONLY=true`。真实BGE模型必须在显式授权后才能下载和验证。
+
+如果本地`.env`已经存在，不要覆盖。后续需要真实M2运行配置时，应只对照`.env.example`补充缺少的键；密码、Token和API Key仍不得写入README或Git。
+
+知识库运行依赖声明在`requirements.txt`。日常配置与边界测试不需要安装或下载BGE模型：
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q tests/unit/test_m2_baseline.py tests/unit/test_app_baseline.py
+```
+
+### PostgreSQL与pgvector
+
+`docker/postgres/Dockerfile`使用当前已验证的PostgreSQL `17.11-alpine3.24` linux/amd64镜像摘要，并从固定Git提交编译pgvector `0.8.6`。编译使用可移植CPU参数且不生成可选LLVM位码；GCC和Make只在构建层出现，最终运行镜像中不保留。`.dockerignore`使用白名单只允许Dockerfile和初始化SQL进入构建上下文，本地`.env`、源码和数据目录不会被发送给构建器。镜像内置初始化SQL，全新数据卷会自动执行`CREATE EXTENSION vector`，但不会创建任何M2业务表。
+
+首次构建和启动：
+
+```powershell
+docker compose build postgres
+docker compose up -d --no-build --wait postgres
+docker compose ps
+```
+
+已有`deep-search-postgres-data`命名卷不会再运行初始化SQL，因此切换镜像后需要在原数据库中执行一次幂等启用。下面的PowerShell只读取容器内的用户名和数据库名，不读取或打印密码：
+
+```powershell
+$dbUser = (docker compose exec -T postgres printenv POSTGRES_USER).Trim()
+$dbName = (docker compose exec -T postgres printenv POSTGRES_DB).Trim()
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U $dbUser -d $dbName -c "CREATE EXTENSION IF NOT EXISTS vector;"
+docker compose exec -T postgres psql -U $dbUser -d $dbName -c "SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';"
+```
+
+回退前应先用`pg_dump -Fc`生成并验证逻辑备份。如果需要退回不含pgvector的旧镜像，应先停止应用写入，确认没有表、列或索引依赖`vector`后移除扩展，或在旧PostgreSQL 17.11镜像的空卷中恢复切换前备份。不要删除或用`down -v`重建正在使用的命名卷。
+
+### LocalStorage
+
+`app/services/storage/`提供统一的`StorageBackend`接口和本地实现。调用方只能传入形如`{tenant_uuid}/{category}/{yyyy}/{mm}/{file_uuid}.{ext}`的对象Key，不能传入Windows绝对路径、反斜杠路径或`..`穿越路径。写入先落到同目录随机临时文件，计算大小与SHA-256并刷盘，再以不覆盖同名目标的方式原子发布；重复Key会返回安全错误，不会改写原文件。读取、存在检查和物理删除同样经过根目录包含与符号链接防护。
+
+可以单独验证：
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q tests/unit/test_local_storage.py
+```
+
+### 知识元数据
+
+Alembic `20260829_0004`新增四张表：`files`保存物理文件档案、`documents`保存稳定逻辑文档、`document_versions`把每一版关联到对应物理文件、`document_acl`保存角色/用户/市场三类显式只读授权。数据库会拒绝跨租户owner和文件关联、同一文档重复版本号或内容hash、重复ACL、格式错误的授权对象，以及指向其他文档版本的`active_version_id`。
+
+`files.status`支持从上传到ready/failed/soft_deleted的状态范围，软删除必须带`deleted_at`；`documents.deleted_at`也为业务过滤提供边界。文件上传、文档版本状态和权限查询分别通过对应的API、Service和Repository处理。
+
+可以验证ORM和真实PostgreSQL迁移：
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q tests/unit/test_knowledge_models.py tests/integration/test_knowledge_migration.py
+.venv\Scripts\python.exe -m alembic current
+.venv\Scripts\python.exe -m alembic check
+```
+
+当前Alembic应为`20260829_0004 (head)`，现有M1库存答案仍为125。
+
+### 元数据业务边界
+
+`app/schemas/files.py`和`app/schemas/knowledge.py`冻结文件、逻辑文档、版本、ACL以及状态转换的数据合同。调用方不能提交tenant、owner、Storage Key、文件路径或SQL；这些可信值只能由登录上下文和受控Storage结果提供。对外响应也不会返回内部Storage Key或解析产物Key。
+
+`FileService`和`DocumentService`负责状态机：文件不能从`uploaded`直接跳到`ready`，文档版本必须先解析ready、再索引ready，而且关联文件也ready，才能切换为active版本。Repository的读取SQL始终附带tenant、软删除、owner以及用户/角色/市场ACL条件；无权读取和资源不存在都表现为安全404，避免泄露资源是否存在。
+
+可以用真实PostgreSQL验证Schema、权限和状态边界：
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q tests/unit/test_knowledge_schemas.py tests/unit/test_m2_baseline.py tests/integration/test_knowledge_services.py
+```
+
+### 文件API
+
+登录用户现在可以使用以下接口：
+
+- `POST /api/v1/files`：以`files`字段上传1至5个PDF、DOCX、XLSX或CSV，整批成功或整批回滚；
+- `GET /api/v1/files`：列出当前用户通过owner或文档ACL可见的文件；
+- `GET /api/v1/files/{file_id}/status`：读取公开元数据和当前状态；
+- `GET /api/v1/files/{file_id}`：通过不透明`file_id`下载，不接受路径参数；
+- `DELETE /api/v1/files/{file_id}`：软删除并立即从访问层隐藏，不物理清除Storage对象。
+
+上传会同时检查数量、文件名、扩展名、声明MIME、PDF/Office/CSV文件特征和单文件大小。LocalStorage使用服务端生成的UUID Key原子保存并计算SHA-256，公开响应不会返回tenant、Storage Key或磁盘路径。如果数据库写入、最终事务提交或批量中的后一个文件失败，本次已经发布的对象会执行补偿删除，避免留下孤儿文件。
+
+可以运行真实PostgreSQL与临时LocalStorage API验证：
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q tests/integration/test_file_api.py
+```
+
+文件API只保存原始文件和文件元数据，不会自动创建Document、解析或索引文件。
+
+### 文本型PDF解析器
+
+`app/services/documents/parsers/pdf.py`使用PyMuPDF从受控二进制流提取每页嵌入文字，并返回从1开始的页码、非空字符数、图片数量和基于字体大小的基础标题线索。输出中不包含文件路径、Storage Key、tenant或SQL。
+
+解析器具有三类资源保护：源文件字节数复用上传上限，页数默认最多500页，总提取文字默认最多500万字符。空页、低文字页和“有图片但几乎没有文字层”的页面会返回结构化警告；疑似扫描页明确提示M2不执行OCR。损坏PDF、加密PDF和超限PDF只抛出固定安全异常，不返回PyMuPDF内部错误。
+
+当前可以在代码中把`StorageBackend.open()`返回的流交给`PdfParser.from_settings(settings)`：
+
+```python
+with storage.open(storage_key) as stream:
+    result = PdfParser.from_settings(settings).parse(stream)
+```
+
+PDF解析器目前作为独立Service使用，尚未接到上传后的解析调度，也不会自行更新数据库状态或保存解析JSON产物。
+
+### DOCX解析器
+
+`app/services/documents/parsers/docx.py`使用`python-docx`读取受控二进制流，按Word正文中的原始先后顺序返回顶层段落和表格。段落、表格、行、列以及正文块都使用从1开始的稳定编号；内置Heading 1至Heading 9会形成标题层级和继承的`heading_path`，后续分块与Evidence可以据此指回原文位置。
+
+解析前会检查DOCX ZIP中央目录，不把内容解压到磁盘，并限制源字节、压缩包成员数、总展开字节、压缩比、正文块、表格单元格和总提取字符。损坏ZIP、危险成员名、加密成员和超限文档只返回固定安全异常；空文档会返回`empty_document`结构化警告。图片仍跟随原文件保留，解析器不读取图片文字、不做OCR或图片理解。
+
+可以把Storage提供的流直接交给解析器：
+
+```python
+with storage.open(storage_key) as stream:
+    result = DocxParser.from_settings(settings).parse(stream)
+```
+
+DOCX解析器目前同样作为独立Service使用，不会自行更新数据库解析状态、保存JSON产物、分块或建立索引。
+
+---
+
+## 库存查询后端
+
+> 当前后端入口是`app.main:app`；下方保留的旧`agent/api/tools`原型不能作为当前启动说明。
+
+### 可运行范围
+
+库存查询后端包括：
 
 - 可导入的FastAPI新入口和会检查数据库的`/health`接口；
 - 集中的M1环境变量配置；

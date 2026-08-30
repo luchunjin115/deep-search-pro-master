@@ -1,0 +1,177 @@
+{
+  "version": "m2-complex-v1",
+  "random_seed": 20260830,
+  "data_classification": "synthetic_demo_data",
+  "storage_date": "2026-08-30",
+  "tenant_name": "LUMORIVA M1 合成演示公司",
+  "owner_email": "owner@demo.deepsearch.local",
+  "product_sku": "LR-TL-MUSH-OR01",
+  "disclaimer": "复杂文档评估资料，仅含合成演示数据，不构成法律、认证、采购或经营意见。",
+  "documents": [
+    {
+      "key": "scanned_receiving_ticket",
+      "original_name": "m2-complex-v1_扫描入库单.pdf",
+      "format": "pdf",
+      "title": "扫描入库单",
+      "document_type": "receiving_ticket",
+      "language": "zh-CN",
+      "market": "DE",
+      "link_product": true,
+      "access_level": "restricted",
+      "acl": [{"subject_type": "market", "market_code": "DE"}],
+      "expected_route": "docling",
+      "requires_ocr": true,
+      "complexity_tags": ["image_only", "scanned_pdf", "ocr_required"],
+      "content": {
+        "pages": [
+          {"image_lines": ["SYNTHETIC RECEIVING TICKET", "BATCH: BATCH-SCAN-42", "RECEIVED: 96 PCS", "STATUS: HOLD FOR INSPECTION"]},
+          {"image_lines": ["SYNTHETIC INSPECTION NOTE", "SAMPLE SIZE: 20 PCS", "RESULT: 19 PASS / 1 REVIEW", "ACTION: RELEASE AFTER REVIEW"]}
+        ]
+      },
+      "golden_facts": [
+        {"question": "扫描入库单的批次号是什么？", "answer": "BATCH-SCAN-42", "locator": {"page_number": 1}},
+        {"question": "扫描质检记录的抽样数量是多少？", "answer": "20 PCS", "locator": {"page_number": 2}}
+      ]
+    },
+    {
+      "key": "two_column_market_brief",
+      "original_name": "m2-complex-v1_双栏市场简报.pdf",
+      "format": "pdf",
+      "title": "双栏市场简报",
+      "document_type": "market_brief",
+      "language": "zh-CN",
+      "market": "DE",
+      "link_product": true,
+      "access_level": "tenant",
+      "acl": [],
+      "expected_route": "docling",
+      "requires_ocr": false,
+      "complexity_tags": ["two_column", "reading_order", "repeated_header_footer"],
+      "content": {
+        "pages": [
+          {
+            "left_heading": "左栏｜销量观察",
+            "left_lines": ["德国站合成销量：139件", "退货率：2.1%", "主搜索词：mushroom table lamp"],
+            "right_heading": "右栏｜动作建议",
+            "right_lines": ["优先补充暖光场景图", "广告预算上限：每日18 EUR", "复盘日期：2026-09-05"]
+          },
+          {
+            "left_heading": "左栏｜库存观察",
+            "left_lines": ["DE-FRA可售库存：125件", "预计覆盖：27天", "补货触发线：80件"],
+            "right_heading": "右栏｜风险说明",
+            "right_lines": ["本页只含合成演示数据", "运输缓冲：7天", "负责人：DE运营组"]
+          }
+        ]
+      },
+      "golden_facts": [
+        {"question": "双栏简报建议的每日广告预算上限是多少？", "answer": "18 EUR", "locator": {"page_number": 1}},
+        {"question": "双栏简报中的补货触发线是多少？", "answer": "80件", "locator": {"page_number": 2}}
+      ]
+    },
+    {
+      "key": "merged_header_cost_table",
+      "original_name": "m2-complex-v1_合并表头成本表.pdf",
+      "format": "pdf",
+      "title": "合并表头成本表",
+      "document_type": "cost_table",
+      "language": "zh-CN",
+      "market": null,
+      "link_product": true,
+      "access_level": "restricted",
+      "acl": [{"subject_type": "role", "role_name": "product_scout"}],
+      "expected_route": "docling",
+      "requires_ocr": false,
+      "complexity_tags": ["merged_header", "borderless_table", "table_semantics"],
+      "content": {
+        "columns": ["供应商", "基础价", "物流", "税费", "落地成本"],
+        "groups": [{"label": "供应商信息", "start": 1, "end": 1}, {"label": "成本构成（EUR/件）", "start": 2, "end": 5}],
+        "rows": [
+          ["合成供应商A", "18.40", "1.80", "0.92", "21.12"],
+          ["合成供应商B", "19.10", "1.20", "0.96", "21.26"],
+          ["合成供应商C", "17.90", "2.10", "0.90", "20.90"]
+        ]
+      },
+      "golden_facts": [
+        {"question": "合成供应商C的落地成本是多少？", "answer": "20.90 EUR/件", "locator": {"page_number": 1, "table_number": 1, "row_number": 4, "column_number": 5}},
+        {"question": "成本表中物流成本最低的是哪家供应商？", "answer": "合成供应商B，1.20 EUR/件", "locator": {"page_number": 1, "table_number": 1, "row_number": 3, "column_number": 3}}
+      ]
+    },
+    {
+      "key": "visual_quality_notice",
+      "original_name": "m2-complex-v1_图文质检通知.docx",
+      "format": "docx",
+      "title": "图文质检通知",
+      "document_type": "quality_notice",
+      "language": "zh-CN",
+      "market": null,
+      "link_product": true,
+      "access_level": "restricted",
+      "acl": [{"subject_type": "role", "role_name": "amazon_operator"}],
+      "expected_route": "docling",
+      "requires_ocr": true,
+      "complexity_tags": ["header_footer", "image_text", "body_visual"],
+      "content": {
+        "header_text": "CONTROL CODE: QC-VISUAL-17",
+        "footer_text": "ESCALATION: QUALITY-LEAD",
+        "sections": [
+          {"heading": "1. 通知范围", "paragraphs": ["本通知适用于合成蘑菇灯到货质检，仅作复杂文档评估。"]},
+          {"heading": "2. 正文要求", "paragraphs": ["常规正文要求：外箱无破损，电源线无裸露。"]}
+        ],
+        "image_lines": ["VISUAL INSPECTION CARD", "DEFECT CODE: IMG-D17", "ACTION: QUARANTINE 12 PCS"]
+      },
+      "golden_facts": [
+        {"question": "图文质检通知页眉中的控制代码是什么？", "answer": "QC-VISUAL-17", "locator": {"page_number": 1}},
+        {"question": "图片质检卡要求隔离多少件？", "answer": "12 PCS", "locator": {"page_number": 1}}
+      ]
+    },
+    {
+      "key": "multi_region_replenishment",
+      "original_name": "m2-complex-v1_多区域补货测算.xlsx",
+      "format": "xlsx",
+      "title": "多区域补货测算",
+      "document_type": "replenishment_workbook",
+      "language": "zh-CN",
+      "market": null,
+      "link_product": true,
+      "access_level": "restricted",
+      "acl": [{"subject_type": "role", "role_name": "product_scout"}],
+      "expected_route": "docling",
+      "requires_ocr": false,
+      "complexity_tags": ["merged_multilevel_header", "multiple_regions", "formulas"],
+      "content": {
+        "sheets": [
+          {
+            "name": "补货测算",
+            "merged_ranges": ["A1:A2", "B1:D1", "E1:G1", "A7:G7"],
+            "rows": [
+              ["SKU", "需求预测", null, null, "库存与补货", null, null],
+              [null, "DE月销", "FR月销", "合计", "可售", "建议补货", "补货后库存"],
+              ["LR-TL-MUSH-OR01", 139, 86, "=B3+C3", 125, 100, "=E3+F3"],
+              ["LR-TL-MUSH-WH01", 72, 54, "=B4+C4", 90, 40, "=E4+F4"],
+              [null, null, null, null, null, null, null],
+              ["说明", "合成数据", null, null, "复核人", "供应链组", null],
+              ["区域二：运输参数", null, null, null, null, null, null],
+              ["市场", "海运天数", "缓冲天数", "总提前期", null, null, null],
+              ["DE", 21, 7, "=B9+C9", null, null, null],
+              ["FR", 24, 6, "=B10+C10", null, null, null]
+            ]
+          },
+          {
+            "name": "参数说明",
+            "merged_ranges": ["A1:C1"],
+            "rows": [
+              ["合成补货模型参数", null, null],
+              ["参数", "值", "说明"],
+              ["服务水平", "95%", "仅用于演示"],
+              ["最小补货批量", 40, "单位：件"]
+            ]
+          }
+        ]
+      },
+      "golden_facts": [
+        {"question": "橙色蘑菇灯建议补货多少件？", "answer": "100件", "locator": {"sheet_name": "补货测算", "cell_range": "F3", "row_number": 3, "column_number": 6}},
+        {"question": "法国市场总提前期公式是什么？", "answer": "=B10+C10", "locator": {"sheet_name": "补货测算", "cell_range": "D10", "row_number": 10, "column_number": 4}}
+      ]
+    }
+  ]
+}
