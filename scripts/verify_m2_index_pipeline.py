@@ -37,6 +37,7 @@ from app.services.retrieval import (
     FakeEmbeddingProvider,
     create_embedding_provider,
 )
+from app.services.retrieval.lexical_text import FtsTextPurpose, build_fts_text
 from app.services.storage import LocalStorageBackend
 from scripts.benchmark_m2_docling import verify_model_cache
 from scripts.benchmark_m2_embedding import ensure_bge_snapshot
@@ -647,7 +648,11 @@ def _row_matches_artifact(
         and row.kind == chunk.kind
         and row.body_text == chunk.body_text
         and row.retrieval_text == chunk.retrieval_text
-        and row.fts_text == chunk.retrieval_text
+        and row.fts_text
+        == build_fts_text(
+            chunk.retrieval_text,
+            purpose=FtsTextPurpose.DOCUMENT,
+        ).text
         and row.token_count == chunk.token_count
         and row.content_sha256 == chunk.content_sha256
         and row.heading_path == chunk.heading_path

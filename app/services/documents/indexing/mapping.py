@@ -22,6 +22,7 @@ from app.services.retrieval import (
     EmbeddingPurpose,
 )
 from app.services.retrieval.embedding import build_embedding_cache_key
+from app.services.retrieval.lexical_text import FtsTextPurpose, build_fts_text
 
 
 class DocumentIndexMappingError(ValueError):
@@ -107,7 +108,10 @@ def map_document_chunk_rows(
                 kind=chunk.kind,
                 body_text=chunk.body_text,
                 retrieval_text=chunk.retrieval_text,
-                fts_text=chunk.retrieval_text,
+                fts_text=build_fts_text(
+                    chunk.retrieval_text,
+                    purpose=FtsTextPurpose.DOCUMENT,
+                ).text,
                 token_count=chunk.token_count,
                 content_sha256=chunk.content_sha256,
                 heading_path=chunk.heading_path,

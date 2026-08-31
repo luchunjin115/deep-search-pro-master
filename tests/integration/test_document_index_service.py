@@ -40,7 +40,12 @@ from app.schemas.knowledge import DocumentCreateInput, DocumentVersionCreateInpu
 from app.services.documents import DocumentService
 from app.services.documents.indexing.service import DocumentIndexService
 from app.services.files import FileService
-from app.services.retrieval import FakeEmbeddingProvider
+from app.services.retrieval import (
+    FTS_BUILDER_VERSION,
+    FakeEmbeddingProvider,
+    FtsTextPurpose,
+    build_fts_text,
+)
 from app.services.storage import LocalStorageBackend
 from tests.fixtures.pdf_factory import make_text_pdf
 
@@ -227,6 +232,23 @@ def test_first_index_runs_full_pipeline_and_activates_only_ready_result(
         assert version.active_index_set_id == result.index_set_id
         assert index_set.status == "ready"
         assert index_set.document_chunk_set_id == result.chunk_set_id
+        assert index_set.fts_builder_version == FTS_BUILDER_VERSION
+        chunks = list(
+            session.scalars(
+                select(DocumentChunk).where(
+                    DocumentChunk.document_index_set_id == result.index_set_id
+                )
+            )
+        )
+        assert chunks
+        assert all(
+            chunk.fts_text
+            == build_fts_text(
+                chunk.retrieval_text,
+                purpose=FtsTextPurpose.DOCUMENT,
+            ).text
+            for chunk in chunks
+        )
         assert (
             session.scalar(
                 select(func.count(DocumentChunk.id)).where(

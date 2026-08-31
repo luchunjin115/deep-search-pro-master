@@ -24,7 +24,7 @@ pandas>=3.0,<4
 filetype>=1.2,<2
 charset-normalizer>=3.4,<4
 pgvector>=0.5,<1
-jieba>=0.42.1,<1
+jieba==0.42.1
 FlagEmbedding>=1.4,<2
 
 # M2-11.2 complex-document benchmark. Docling stays out of the main parser path

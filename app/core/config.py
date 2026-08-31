@@ -10,6 +10,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BGE_M3_MODEL_ID = "BAAI/bge-m3"
 BGE_M3_REVISION = "5617a9f61b028005a4858fdac845db406aefb181"
+RETRIEVAL_QUERY_HARD_MAX_CHARACTERS = 2000
+RETRIEVAL_CANDIDATE_HARD_MAX = 100
 
 
 class Settings(BaseSettings):
@@ -198,8 +200,26 @@ class Settings(BaseSettings):
     chunk_heading_context_max_tokens: int = Field(default=120, ge=20, le=200)
     chunk_table_row_overlap: int = Field(default=1, ge=0, le=20)
     chunk_repeated_edge_min_pages: int = Field(default=2, ge=2, le=20)
-    dense_candidate_count: int = Field(default=30, ge=5, le=100)
-    lexical_candidate_count: int = Field(default=30, ge=5, le=100)
+    retrieval_query_max_characters: int = Field(
+        default=RETRIEVAL_QUERY_HARD_MAX_CHARACTERS,
+        ge=1,
+        le=RETRIEVAL_QUERY_HARD_MAX_CHARACTERS,
+    )
+    dense_candidate_count: int = Field(
+        default=30,
+        ge=5,
+        le=RETRIEVAL_CANDIDATE_HARD_MAX,
+    )
+    lexical_candidate_count: int = Field(
+        default=30,
+        ge=5,
+        le=RETRIEVAL_CANDIDATE_HARD_MAX,
+    )
+    hybrid_candidate_count: int = Field(
+        default=30,
+        ge=5,
+        le=RETRIEVAL_CANDIDATE_HARD_MAX,
+    )
     rrf_k: int = Field(default=60, ge=1, le=200)
     reranker_top_k: int = Field(default=8, ge=5, le=8)
 
@@ -318,8 +338,13 @@ class Settings(BaseSettings):
         if self.reranker_top_k > min(
             self.dense_candidate_count,
             self.lexical_candidate_count,
+            self.hybrid_candidate_count,
         ):
             raise ValueError("RERANKER_TOP_K不能大于任一路候选数量")
+        if self.hybrid_candidate_count > (
+            self.dense_candidate_count + self.lexical_candidate_count
+        ):
+            raise ValueError("HYBRID_CANDIDATE_COUNT不能大于两路候选数量之和")
         return self
 
 

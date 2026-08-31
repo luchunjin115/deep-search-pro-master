@@ -79,6 +79,7 @@ def _status_for_error(error: ApplicationError) -> int:
         "DOCUMENT_VERSION_CONFLICT": 409,
         "DOCUMENT_ACL_CONFLICT": 409,
         "VALIDATION_ERROR": 422,
+        "DATABASE_UNAVAILABLE": 503,
         "DATABASE_TIMEOUT": 504,
         "BUDGET_EXCEEDED": 429,
         "PROVIDER_ERROR": 503 if error.retryable else 422,

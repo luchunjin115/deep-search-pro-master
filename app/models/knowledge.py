@@ -678,7 +678,8 @@ class DocumentIndexSet(Base):
         CheckConstraint(
             "index_schema_version = 'm2-document-index-set-v1' "
             "AND embedding_purpose = 'document' "
-            "AND fts_builder_version = 'm2-fts-raw-retrieval-v1' "
+            "AND fts_builder_version IN "
+            "('m2-fts-raw-retrieval-v1', 'm2-fts-jieba-search-v1') "
             "AND embedding_identity_sha256 ~ '^[0-9a-f]{64}$' "
             "AND embedding_model = btrim(embedding_model) "
             "AND char_length(embedding_model) BETWEEN 1 AND 200 "

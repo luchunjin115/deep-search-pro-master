@@ -67,6 +67,8 @@ M2_ENVIRONMENT_VARIABLES = (
     "CHUNK_REPEATED_EDGE_MIN_PAGES",
     "DENSE_CANDIDATE_COUNT",
     "LEXICAL_CANDIDATE_COUNT",
+    "HYBRID_CANDIDATE_COUNT",
+    "RETRIEVAL_QUERY_MAX_CHARACTERS",
     "RRF_K",
     "RERANKER_TOP_K",
 )
@@ -154,6 +156,8 @@ def test_m2_settings_use_safe_local_defaults() -> None:
     assert settings.chunk_repeated_edge_min_pages == 2
     assert settings.dense_candidate_count == 30
     assert settings.lexical_candidate_count == 30
+    assert settings.hybrid_candidate_count == 30
+    assert settings.retrieval_query_max_characters == 2000
     assert settings.rrf_k == 60
     assert settings.reranker_top_k == 8
 
@@ -252,6 +256,24 @@ def test_env_example_contains_a_valid_m2_configuration() -> None:
             {"dense_candidate_count": 5, "reranker_top_k": 8},
             "RERANKER_TOP_K",
         ),
+        (
+            {
+                "dense_candidate_count": 5,
+                "lexical_candidate_count": 5,
+                "hybrid_candidate_count": 11,
+                "reranker_top_k": 5,
+            },
+            "HYBRID_CANDIDATE_COUNT",
+        ),
+        (
+            {"hybrid_candidate_count": 5, "reranker_top_k": 8},
+            "RERANKER_TOP_K",
+        ),
+        ({"retrieval_query_max_characters": 0}, "retrieval_query_max_characters"),
+        (
+            {"retrieval_query_max_characters": 2001},
+            "retrieval_query_max_characters",
+        ),
         ({"embedding_dimensions": 768}, "1024"),
         ({"embedding_normalize": False}, "True"),
         ({"embedding_backend": "bge"}, "EMBEDDING_REVISION"),
@@ -335,7 +357,7 @@ def test_new_app_ast_does_not_import_legacy_file_or_ragflow_runtime() -> None:
         assert imported_roots.isdisjoint(forbidden_roots), source_file
 
 
-def test_m2_15_stops_after_index_pipeline_without_retrieval() -> None:
+def test_m2_16_2_stops_after_fts_builder_without_retrieval_execution() -> None:
     project_root = Path(__file__).parents[2]
 
     assert (project_root / "app/services/storage").is_dir()
@@ -378,6 +400,9 @@ def test_m2_15_stops_after_index_pipeline_without_retrieval() -> None:
     assert (
         project_root / "migrations/versions/20260831_0007_document_index_sets.py"
     ).is_file()
+    assert (
+        project_root / "migrations/versions/20260831_0008_versioned_jieba_fts.py"
+    ).is_file()
     assert (project_root / "scripts/seed_m2_files.py").is_file()
     assert (project_root / "scripts/m2_seed_content.py").is_file()
     assert (project_root / "scripts/verify_m2_chunk_pipeline.py").is_file()
@@ -394,6 +419,9 @@ def test_m2_15_stops_after_index_pipeline_without_retrieval() -> None:
     assert (project_root / "tests/smoke/test_document_index_bge_smoke.py").is_file()
 
     retrieval = project_root / "app/services/retrieval"
+    assert (project_root / "app/schemas/retrieval.py").is_file()
+    assert (retrieval / "errors.py").is_file()
+    assert (retrieval / "lexical_text.py").is_file()
     assert not (retrieval / "keyword.py").exists()
     assert not (retrieval / "dense.py").exists()
     assert not (retrieval / "hybrid.py").exists()

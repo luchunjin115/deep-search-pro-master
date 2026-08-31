@@ -9,12 +9,12 @@
 
 | 项目 | 当前内容 |
 |---|---|
-| 当前阶段 | M2：知识库垂直切片（M2-15已完成） |
+| 当前阶段 | M2：知识库垂直切片（M2-16进行中） |
 | 阶段状态 | 进行中 |
-| 当前步骤 | M2-15.6已完成：10文档Fake整链、失败重试、重复幂等、离线BGE单文档Smoke和正式Seed恢复均已验证 |
-| 已完成到 | M1已完成；M2已完成M2-01至M2-15；全量`518 passed, 6 skipped`，Alembic为`20260831_0007 (head)`，正式Seed保持0 Chunk Set/0 Index Set/0 Chunk/0 Embedding |
-| 下一动作 | 停止在M2-15边界；M2-16检索功能必须先提交实施方案并得到用户明确确认，当前不自动开始 |
-| 当前阻塞 | 无技术硬阻塞；V1尚无进程崩溃后的indexing租约自动回收；图文DOCX 0/2不在M2-15修复。全仓Ruff格式门已通过，两个冻结Seed生成器由`ruff.toml`保护原始哈希 |
+| 当前步骤 | M2-16.2已完成：文档侧和未来查询侧共享固定jieba中文分词规则，0008允许旧raw与新版FTS Index Set安全共存；尚未实现检索SQL |
+| 已完成到 | M1已完成；M2已完成M2-01至M2-15及M2-16.1至M2-16.2；后端全量`568 passed, 8 skipped`，Alembic为`20260831_0008 (head)`且无迁移漂移，正式Seed为10文件/10文档/10版本/9 ACL并保持0 Chunk Set/0 Index Set/0 Chunk/0 active指针，M1可售库存125 |
+| 下一动作 | 停止并等待用户确认；确认后才可进入M2-16.3共享tenant、ACL、active Version、active Index Set候选边界，不自动实施M2-16.3或后续小步 |
+| 当前阻塞 | 无技术硬阻塞；旧raw FTS Index Set不会被原地改写，未来需用新版Builder重建后再切active；M2-16.2尚无生产Lexical查询，只有迁移测试用参数化SQL验证新版词条可命中；V1尚无进程崩溃后的indexing租约自动回收，图文DOCX 0/2仍为既有边界 |
 
 ## 2. 里程碑总览
 
@@ -22,7 +22,7 @@
 |---|---|---|---|
 | M0 | 产品、技术、数据、评估与协作基线 | 已完成 | [查看M0详细记录](progress/M0_DESIGN.md) |
 | M1 | 库存查询垂直切片 | 已完成 | [查看M1详细记录](progress/M1_INVENTORY_QUERY.md)；M1-01至M1-21全部完成并验证 |
-| M2 | 自建RAG垂直切片 | 进行中 | [查看M2方案与实施记录](progress/M2_KNOWLEDGE_RAG.md)；M2-15已完成 |
+| M2 | 自建RAG垂直切片 | 进行中 | [查看M2方案与实施记录](progress/M2_KNOWLEDGE_RAG.md)；M2-16.1至M2-16.2已完成，等待确认M2-16.3 |
 | M3 | 多模态商品分析 | 待开始 | 等待M2完成 |
 | M4 | 深度研究与报告 | 待开始 | 等待M3完成 |
 | M5 | 评估、加固与作品化 | 待开始 | 等待M4完成 |
@@ -75,6 +75,8 @@
 | M2 Chunk发布 | `DocumentChunkService`有界验真解析JSON、原子领取确定性Chunk Set、事务外切块并按`{tenant}/chunks/{year}/{month}/{chunk_set_id}.json`不可覆盖发布；失败清理半成品并可用同一ID重试，只复用字节完全相同的孤儿对象 |
 | M2 Chunk检索存储 | `document_chunks`一行对应一个Canonical Chunk；普通列与双重复合外键固定tenant/document/version/Chunk Set关系，JSONB保存M2-12定位和表格结构，独立`fts_text`生成`simple` FTS并使用GIN，Embedding保持可空`vector(1024)`并预建余弦HNSW，真实向量生成留到M2-14 |
 | M2索引代次与active指针 | 新增确定性`document_index_sets`保存Chunk Set、完整Embedding身份、FTS版本、状态、attempt和统计；Version active指针通过tenant/document/version/status复合外键只能指向自己的ready Index Set，Chunk唯一边界按Index Set隔离 |
+| M2检索公开合同 | 请求体只接受去空白后的有界`query`，候选数量只由服务端集中配置；Dense/Lexical单路未命中用`None`表达，所有公开分数拒绝NaN/Infinity，排名为正整数；PDF/DOCX/XLSX/CSV使用类型化公开定位，响应不含tenant、ACL、Storage Key、路径、向量、SQL或原始异常 |
+| M2版本化中文FTS | 文档与查询统一使用`m2-fts-jieba-search-v1`：固定jieba 0.42.1及词典SHA-256、search模式、`HMM=False`、NFKC/casefold和Unicode字母数字过滤；0008允许旧raw与新版Index Set共存，存在新版数据时拒绝静默降级 |
 
 ## 5. 当前阻塞与跨阶段问题
 
@@ -143,3 +145,7 @@
 - 2026-08-31：完成M2-15.4；新增`DocumentIndexService`，复用M2-11/12 ready Artifact并串起claim→分批Embedding→Mapper→原子保存，解析/切块/模型/数据库失败均安全登记，同ID重试attempt递增；重复ready跳过Provider且复核实际Chunk统计，129段按128+1保持顺序，同Version新Embedding和新Version均在成品ready后才切active。新增11项测试，聚焦`65 passed`、全量`510 passed, 5 skipped`，Ruff、102文件Mypy、编译、依赖及Alembic检查通过；无需迁移，正式Seed恢复为10/10/10/9、10个pending版本、0 Chunk Set/Index Set/Chunk/Embedding及Storage 10 uploads；停止等待M2-15.5。
 - 2026-08-31：完成M2-15.5；新增三条受认证Documents API，接通创建文档、追加版本和显式同步索引，严格响应不暴露tenant/Storage/path/vector；真实FastAPI/PostgreSQL验证首次与重复索引、Chunk不增行、V1在V2 ready前保持active、company_owner完成后原子切V2、ACL读者/跨边界安全404、409/422/500及Provider恢复后同URL重试。OpenAPI精确只有三条Documents写入路径且无检索功能；新增5项测试，全量`515 passed, 5 skipped`，Ruff、101文件Mypy、编译、依赖及Alembic检查通过；无需迁移，正式Seed恢复为10/10/10/9、10个pending版本、0 Chunk Set/Index Set/Chunk/Embedding及Storage 10 uploads；停止等待M2-15.6。
 - 2026-08-31：完成M2-15.6并收口M2-15；新增可重复的10文档Fake索引验收脚本、验收判定测试、显式离线BGE-M3单文档Smoke和M2-15边界哨兵。正式整链得到10 ready、35 Chunk（27文本/8表格）、35 Embedding/FTS，首次故障第2次重试成功，重复10次全部复用且Provider调用和Chunk数不增长；真实BGE固定模型/revision索引与清理通过。全量`518 passed, 6 skipped`，Ruff lint/194文件格式、104文件Mypy、编译、依赖、Alembic和Docker健康检查通过；恢复后正式Seed为10/10/10/9、10个parse/index pending、0 active/Chunk Set/Index Set/Chunk/Embedding，Storage 10 uploads、0 parsed/chunks JSON，M1指定库存125。未实现任何M2-16检索功能，停止等待下一阶段方案确认。
+- 2026-08-31：完成Git同步后的本机环境恢复与全量复验；补齐`pgvector/jieba/FlagEmbedding`，启动PostgreSQL 17.11 + pgvector 0.8.6并把Alembic从`0004`升级到`20260831_0007 (head)`，下载固定`BAAI/bge-m3@5617a9f61b028005a4858fdac845db406aefb181`本地快照并通过离线Embedding `2 passed`及真实索引`1 passed`。修复Chunk Set迁移测试遗漏固定`created_at`导致UTC 10:01后必失败的时间夹具，后端全量`516 passed, 8 skipped`，前端组件`4 passed`、TypeScript、ESLint、Next.js生产构建及Chromium端到端`4 passed`；未开始M2-16。
+- 2026-08-31：完成M2-16只读盘点、通俗讲解和方案确认；用户两次回复“继续”，确认按“权限前置的Lexical + Dense + Hybrid + RRF检索闭环”实施，但不授权Reranker、RAG、前端、Agent或M2-17。正式Seed已幂等恢复为10文件/10文档/10版本/9 ACL、0 Chunk Set/Index Set/Chunk/Embedding；本轮只记录确认和前置基线，尚未编写检索代码。
+- 2026-08-31：完成M2-16.1；新增统一检索请求、四类来源定位、公开候选/文档/Embedding/FTS身份、Dense/Lexical可选分解、RRF和最终排名合同，以及六类固定脱敏检索错误；补齐query/hybrid集中配置与组合校验。TDD先因模块不存在RED，最终聚焦`83 passed`、后端全量`554 passed, 8 skipped`，全仓Ruff lint、105文件Mypy、编译、依赖及Alembic检查通过；全量测试清空共享Seed后已用既有幂等入口恢复10/10/10/9、0索引数据和M1可售125。未实现分词、迁移、SQL、Repository、Service、API或真实模型加载，停止等待M2-16.2确认。
+- 2026-08-31：完成M2-16.2；新增版本化`m2-fts-jieba-search-v1`共享Builder，固定jieba 0.42.1、词典Hash、search模式、`HMM=False`与文本规范化，索引Mapper改存稳定中文词条；0008允许旧raw和新版Index Set共存并在新版数据存在时拒绝静默降级。迁移往返、active成品切换、真实索引Service写入和参数化FTS命中通过，聚焦`151 passed`、后端全量`568 passed, 8 skipped`，Ruff、110文件Mypy、编译、依赖及Alembic检查通过；正式Seed恢复为10/10/10/9、0索引数据、Storage仅10 uploads和M1可售125。未实现候选Repository或生产检索SQL，停止等待M2-16.3确认。

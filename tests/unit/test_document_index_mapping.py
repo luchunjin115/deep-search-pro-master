@@ -34,6 +34,7 @@ from app.services.retrieval import (
     EmbeddingPurpose,
     FakeEmbeddingProvider,
 )
+from app.services.retrieval.lexical_text import FtsTextPurpose, build_fts_text
 
 _TENANT_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 _DOCUMENT_ID = UUID("11111111-1111-4111-8111-111111111111")
@@ -150,7 +151,7 @@ def test_index_identity_is_stable_and_covers_the_full_embedding_identity() -> No
     assert first == repeated
     assert first.index_set_id != changed.index_set_id
     assert first.index_schema_version == "m2-document-index-set-v1"
-    assert first.fts_builder_version == "m2-fts-raw-retrieval-v1"
+    assert first.fts_builder_version == "m2-fts-jieba-search-v1"
     assert first.embedding_purpose == "document"
     assert first.embedding_model == "fake/m2-deterministic"
     assert first.embedding_version == "m2-fake-v1"
@@ -210,7 +211,15 @@ def test_mapper_preserves_chunk_order_json_and_embedding_audit_fields() -> None:
     assert all(row.tenant_id == _TENANT_ID for row in first)
     assert all(row.document_index_set_id == identity.index_set_id for row in first)
     assert all(row.document_chunk_set_id == artifact.chunk_set_id for row in first)
-    assert all(row.fts_text == row.retrieval_text for row in first)
+    assert all(
+        row.fts_text
+        == build_fts_text(
+            row.retrieval_text,
+            purpose=FtsTextPurpose.DOCUMENT,
+        ).text
+        for row in first
+    )
+    assert first[0].fts_text == "安全 要求 安全 要求 额定 电压 为 220 v"
     assert all(row.embedding_model == "fake/m2-deterministic" for row in first)
     assert all(row.embedding_version == "m2-fake-v1" for row in first)
     assert [row.embedding_cache_key for row in first] == list(batch.cache_keys)

@@ -16,11 +16,14 @@
 > M2-15.4完成：2026-08-31，DocumentIndexService编排、解析/切块复用、分批Embedding、失败补偿和整链原子激活已完成并验证
 > M2-15.5完成：2026-08-31，最小Documents API、严格Schema、依赖组装、管理权限、安全错误和同步重试已完成并验证
 > M2-15.6完成：2026-08-31，正式10文档Fake整链、显式离线BGE Smoke、失败重试、重复幂等、全量质量门和Seed恢复已完成并验证
-> 当前步骤：M2-15已经完成；停止在M2-15边界，M2-16必须先提交方案并得到用户明确确认
+> M2-16方案确认：2026-08-31，用户在完整方案和通俗解释后两次明确回复“继续”；只授权有权限约束的Lexical、Dense、Hybrid与RRF检索闭环，不授权Reranker、RAG或M2-17
+> M2-16.1完成：2026-08-31，严格检索输入/输出、分数、集中配置和安全错误合同已冻结并验证
+> M2-16.2完成：2026-08-31，版本化中文FTS Builder、索引写入接入与`20260831_0008`迁移已完成并验证
+> 当前步骤：明确停止在M2-16.2；等待用户确认后才可进入M2-16.3共享获权active候选边界
 > M1 代码基线：`main` / `94ad0eec837dfa618bb2e0c07e6a21769d690ebb`
 > 数据性质：M2 文档、标准答案和评估数据必须是明确标注的版本化合成演示数据
 
-> **当前停止点：M2-15已经完成并验证。不得自动开始M2-16；Documents写入/同步索引API已经存在，但仍未实现任何关键词、Dense或混合检索功能。**
+> **当前停止点：M2-16.1与M2-16.2已经完成。不得自动开始M2-16.3；每个后续小步骤仍需单独授权，不自动实施Reranker、RAG、前端、Agent或M2-17。**
 
 ## 1. 本文档目的
 
@@ -302,7 +305,7 @@ M2 不提前引入 Redis/Celery。上传 API 只负责安全落盘和元数据�
 - 真实模型 Smoke 与完整离线回归分开，不能让日常 `pytest` 隐式下载数 GB 模型；
 - 记录模型 ID、revision、维度、归一化、batch、设备、耗时和峰值内存，Embedding 变更必须生成新版本。
 
-## 7. 26 个正式步骤（M2-11细分为5个受控子步骤）
+## 7. 24 个正式步骤（M2-11与M2-16各自包含受控子步骤）
 
 每个步骤只解决一个清晰问题。完成代码、实际验证和阶段日志后暂停，不自动进入下一步。
 
@@ -418,77 +421,71 @@ M2 不提前引入 Redis/Celery。上传 API 只负责安全落盘和元数据�
 - 调用链：API → Schema → Index Service → Storage/Parser/Chunk/Embedding → Model → PostgreSQL/pgvector。
 - 验证：首次索引、重复请求不增块、失败状态、旧 active 保留、新版 ready 后原子切换、删除文档不检索、进程中断限制有明确记录。
 
-### M2-16｜实现权限前置的 Dense 检索
+### M2-16｜实现权限前置的 Lexical、Dense、Hybrid 与 RRF 检索闭环
 
-- 目标：查询向量后在 SQL 中先应用 tenant、ACL、active version、ready、deleted 过滤，再按余弦取 top-k。
-- 预计文件：`app/repositories/retrieval.py`、`app/services/retrieval/dense.py`、集成测试。
-- 调用链：Retrieval Service → Repository → pgvector。
-- 验证：相关块排序、跨tenant/owner/market零泄露、旧版本/失败/删除块不出现、top-k和超时生效。
+- 目标：一次完成“只能从获权的当前正式索引中找资料”的检索核心，但继续拆成七个单一职责小步骤逐项验证：
+  1. `M2-16.1`：冻结检索输入、输出、分数和安全错误合同；
+  2. `M2-16.2`：建立文档侧与查询侧一致的版本化中文分词，并增加兼容旧/新FTS builder的`0008`迁移；
+  3. `M2-16.3`：建立Dense与Lexical共用的tenant、owner/company_owner、user/role/market ACL、active Version、active ready Index Set和软删除候选边界；
+  4. `M2-16.4`：使用`QUERY`用途Embedding和pgvector余弦距离实现Dense top-N；这是原路线图M2-16的核心；
+  5. `M2-16.5`：使用同版jieba和PostgreSQL FTS实现中文、英文、SKU、型号及条款号Lexical top-N；这是原路线图M2-17的核心；
+  6. `M2-16.6`：按chunk去重并用固定`rrf_k=60`融合两路名次，保留原始排名和分数；这是原路线图M2-18的核心；
+  7. `M2-16.7`：完成Fake日常闭环、固定向量真实PostgreSQL排序、显式离线BGE Smoke、故障矩阵和正式Seed恢复。
+- 预计文件：`app/schemas/retrieval.py`、`app/services/retrieval/{errors,lexical_text,dense,lexical,hybrid}.py`、`app/repositories/retrieval.py`、`migrations/versions/*_document_chunk_fts_builder.py`、验证脚本及单元/集成/Smoke测试。
+- 调用链：内部调用者 → Retrieval Schema → Hybrid Service → Dense + Lexical → EmbeddingProvider/Repository → Model → PostgreSQL FTS/pgvector → RRF安全结果；本阶段不经过前端、HTTP检索API、Reranker、Qwen、Evidence或Agent。
+- 验证：两路检索在排序和`LIMIT`前使用同一获权active集合；中文/英文/SKU、固定向量余弦顺序、稳定RRF、来源定位和分数分解通过；跨tenant/owner/market、旧版本、失败索引和软删除零泄露；Fake不冒充语义质量，真实BGE只由显式离线Smoke加载。
+- 授权边界：M2-16方案已确认，但仍按M2-16.1至M2-16.7逐步开发、验证、记录和汇报；M2-16不包含下方M2-17 Reranker或更后步骤。
 
-### M2-17｜实现中文友好的 Lexical 检索
-
-- 目标：构建应用层中文分词后的 PostgreSQL FTS 查询，同时保留型号、条款号和数字精确能力。
-- 预计文件：`app/services/retrieval/lexical.py`、Repository FTS 方法、分词配置和测试。
-- 调用链：Query → Lexical Service → Repository → PostgreSQL FTS。
-- 验证：中文短语、德法/英文、SKU/型号/条款号、权限过滤、停用词、无结果和 statement timeout。
-
-### M2-18｜实现 RRF 混合检索
-
-- 目标：合并 Dense/Lexical 名次、去重并保留两路排名和分数摘要。
-- 预计文件：`app/services/retrieval/hybrid.py`、Schema、单元/集成测试。
-- 调用链：Retrieval Service → Dense + Lexical → RRF。
-- 验证：单路和双路命中、稳定排序、重复块、一路失败的安全策略、权限集合不扩大、参数可配置。
-
-### M2-19｜实现 BGE-Reranker 与真实基准
+### M2-17｜实现 BGE-Reranker 与真实基准
 
 - 目标：对获权混合候选做二次精排，输出 top 5～8；本步才显式下载 Reranker。
 - 预计文件：`app/services/retrieval/reranker.py`、Fake/真实 Smoke、基准脚本和测试。
 - 调用链：Hybrid Candidates → Reranker → Final Candidates。
 - 验证：Fake稳定、真实中英文相关性、模型/revision/设备记录、内存、超时、空候选、批量降级；不得重新引入未授权块。
 
-### M2-20｜实现 Context Builder、知识 Evidence 和引用验证
+### M2-18｜实现 Context Builder、知识 Evidence 和引用验证
 
 - 目标：去重/邻块补全/Token预算，把最终 Chunk 转成 knowledge/user_file Evidence，并验证 `[E#]`。
 - 预计文件：Evidence迁移、`app/schemas/evidence.py`、`app/services/evidence.py`、`app/services/retrieval/context.py`、测试。
 - 调用链：Reranked Chunks → Context/Evidence Service → Model → PostgreSQL → Evidence。
 - 验证：PDF页码、DOCX段/表、Sheet/单元格/行范围、Evidence外键、ACL读取、错位/编造引用拒绝、M1 database Evidence仍可读。
 
-### M2-21｜实现并注册 `search_knowledge` Tool
+### M2-19｜实现并注册 `search_knowledge` Tool
 
 - 目标：通过 Harness 调用混合检索、Reranker、Context 和 Evidence，返回严格 ToolEnvelope。
 - 预计文件：`app/schemas/knowledge.py`、`app/tools/search_knowledge.py`、Registry/Permission扩展、Tool测试。
 - 调用链：Schema → Harness → Tool → Retrieval/Evidence Service → PostgreSQL/pgvector。
 - 验证：成功、无答案、越权、预算、超时、错误脱敏、ToolCall与Evidence关联；Registry累计5个V1已实现Tool中的3个M2工具逐步加入。
 
-### M2-22｜实现 `read_uploaded_file` 与 `get_evidence_detail` Tool
+### M2-20｜实现 `read_uploaded_file` 与 `get_evidence_detail` Tool
 
 - 目标：按 file_id/locator 有界读取解析产物，并把现有 Evidence 详情能力纳入 Agent Tool 白名单。
 - 预计文件：`app/tools/read_uploaded_file.py`、`get_evidence_detail.py`、对应Schema、Registry、Service和测试。
 - 调用链：Schema → Harness → Tool → File/Evidence Service → Storage/PostgreSQL。
 - 验证：owner/ACL、路径参数拒绝、长度上限、页/Sheet范围、删除后不可读、跨tenant/market统一安全错误、无原路径/Storage key泄露。
 
-### M2-23｜新增有界知识路由、LangGraph 和基于 Evidence 的回答
+### M2-21｜新增有界知识路由、LangGraph 和基于 Evidence 的回答
 
 - 目标：保留 M1 库存图，增加 knowledge_query 分支；Mock免费回归，Qwen只依据获权 Evidence 组织带引用回答。
 - 预计文件：`app/agents/router.py`、`app/agents/graphs/knowledge_query.py`、`app/llm/provider.py`及Schema、聊天API扩展、测试。
 - 调用链：API → Router/LangGraph → Provider建议 → Harness/Tool → Retrieval/Evidence → Mock/Qwen → 引用验证 → 回答。
 - 验证：库存问题仍走M1、知识问题只开放知识Tool、无答案拒答、Prompt注入文档只当数据、引用合法、模型/Tool预算、Qwen付费 Smoke默认跳过。
 
-### M2-24｜建立最小 RAG 评估集和 Runner
+### M2-22｜建立最小 RAG 评估集和 Runner
 
 - 目标：复用 `m2-v1` 普通语料与 `m2-complex-v1` 复杂语料建立约20条最小样本，分别记录 Parser路由、Dense、Lexical、RRF、Reranker 和最终引用结果。
 - 预计文件：`app/evals/rag_runner.py`、`data/evals/m2_rag_v1.jsonl`、期望定位、结果模板和测试。
 - 调用链：Eval Runner → Retrieval各阶段 → Evidence/答案；不经过前端。
 - 验证：普通/复杂文档分组的解析事实召回、路由准确性、Recall@5/@10、MRR、Citation Accuracy、无答案拒答、ACL阻断、多语言和版本过滤；保存代码、数据、Parser、Docling模型和检索参数版本。
 
-### M2-25｜实现最小前端上传、状态、知识问答和引用展示
+### M2-23｜实现最小前端上传、状态、知识问答和引用展示
 
 - 目标：在现有工作台增加附件、文件状态、知识回答和按来源类型展示的 Evidence 票据。
 - 预计文件：`frontend/lib/api.ts`、`components/inventory-workbench.tsx`的受控拆分或扩展、knowledge/upload组件、CSS和组件测试。
 - 调用链：前端 → Files/Chat/Evidence API → M2后端全链。
 - 验证：选择/上传、状态、失败重试、知识问题、页码/Sheet引用、键盘/焦点、无权限和合成资料标识；TypeScript、ESLint、Build。
 
-### M2-26｜完成故障矩阵、真实 BGE 演示、Chromium 回归和阶段收口
+### M2-24｜完成故障矩阵、真实 BGE 演示、Chromium 回归和阶段收口
 
 - 目标：从干净 M2 数据状态复现普通Native解析、复杂Docling解析、上传、索引、问答、引用、版本和越权，更新 README 与进度记录。
 - 预计文件：后端集成测试、`frontend/e2e/*`、演示脚本、README、本文件和总看板。
@@ -499,7 +496,7 @@ M2 不提前引入 Redis/Celery。上传 API 只负责安全落盘和元数据�
 
 M2 只有同时满足以下条件才能标记为“已完成”：
 
-1. M2-01至M2-26均经用户逐步授权、完成并记录实际验证；
+1. M2-01至M2-24均经用户逐步授权、完成并记录实际验证；
 2. PostgreSQL 17 + pgvector 可重复启动，M1结构和125基线未丢失；
 3. PDF、DOCX、XLSX、CSV 可以安全上传、解析、失败重试和软删除；
 4. `m2-v1`普通语料与`m2-complex-v1`复杂语料均可重复生成；普通文件保持Native快速路径，指定复杂文件经安全检查后进入固定版本Docling，两路汇合为统一Canonical Artifact；
@@ -672,7 +669,7 @@ M1的集中配置还不知道M2文件、模型和检索参数，主依赖也没�
 - 新增M2依赖已经安装或每个包可以真实导入；当前只完成隔离求解，真实安装按需要的后续步骤进行；
 - 当前PostgreSQL尚未提供`vector`扩展；镜像仍是M1的`postgres:17.11-alpine3.24`，M2-02才处理；
 - Storage能安全读写、文件能上传/解析/分块，或BGE能产生向量和重排；这些模块尚不存在；
-- `main`是可用于真实模型运行的固定revision；配置只允许Fake默认使用它，真实BGE后端必须在M2-14/M2-19填写固定revision；
+- `main`是可用于真实模型运行的固定revision；配置只允许Fake默认使用它，真实BGE后端必须在M2-14/M2-17填写固定revision；
 - 前端、API、Model、pgvector和Evidence链路已经增加M2能力。
 
 **常见问题与优先排查方向**
@@ -680,7 +677,7 @@ M1的集中配置还不知道M2文件、模型和检索参数，主依赖也没�
 - `.env`新增字段拼写错误或JSON数组格式错误：先用`Settings()`或定向测试检查，不要到上传API阶段才排查；
 - 本地`.env`暂时没有M2键：当前安全默认值足以导入和运行M1；进入需要真实目录或真实BGE的步骤时只补对应键，不覆盖现有密码与API Key；
 - 真实BGE配置被拒绝：必须提供固定模型revision，不能继续使用会漂移的`main`；
-- 依赖安装很慢或磁盘增长：优先确认FlagEmbedding带来的PyTorch/Transformers/数据集传递依赖，按M2-14/M2-19分别安装与基准，不要把模型权重提交Git；
+- 依赖安装很慢或磁盘增长：优先确认FlagEmbedding带来的PyTorch/Transformers/数据集传递依赖，按M2-14/M2-17分别安装与基准，不要把模型权重提交Git；
 - 应用导入时要求RAGFlow Key：检查新`app/`是否误导入旧`tools/ragflow_tools.py`或`rawflow/`；
 - Storage目录配置被拒绝：不要指向`.`或磁盘根目录，原文件目录和模型缓存目录也必须分开；
 - M1测试失败：先检查新增Settings校验是否改变M1默认值，再检查开发Shell中的M2环境变量污染。
@@ -1697,7 +1694,7 @@ Native与Docling只在解析阶段分支；分块、Embedding、Dense/Lexical/RR
 - 输入：M2合成产品/运营业务定义、现有文件生成器模式和SourceLocator合同；
 - 输出：版本化复杂PDF/DOCX/XLSX、黄金问题/答案/定位、期望路由/OCR标记、manifest及幂等Seed；
 - 上游：M2-03 Storage、M2-04/05知识元数据、M2-10可重复Seed模式；
-- 下游：M2-11.2真实Docling基准、M2-11.4路由、M2-12分块和M2-24 RAG评估。
+- 下游：M2-11.2真实Docling基准、M2-11.4路由、M2-12分块和M2-22 RAG评估。
 
 **计划语料**
 
@@ -2272,7 +2269,7 @@ M2-12已经完成。下一步M2-13才会建立`document_chunks`、FTS和`vector(
 3. 输入、输出和上下游：输入是`m2-canonical-chunk-artifact-v1`中单个`DocumentChunk`的字段和既有`DocumentChunkSet`身份；输出是`document_chunks`数据库行、自动生成的`search_vector`、GIN索引和余弦HNSW索引。上游M2-12合同/Chunk Set不改；下游M2-14才生成真实Embedding，M2-15才实现幂等索引管线，M2-16/17才实现Dense/Lexical查询；
 4. 身份与生命周期：每行显式保存`tenant_id/document_id/document_version_id/document_chunk_set_id`；直接版本复合外键以及同时覆盖tenant/Chunk Set/version/document的四列复合外键共同阻止错挂。为此给Chunk Set增加四列唯一引用键；删除Chunk Set会级联删除其Chunk，删除DocumentVersion会经直接外键和Chunk Set生命周期清理Chunk；没有把任何身份只埋进JSON；
 5. Chunk合同保存：普通列保存`chunk_id/chunk_index/kind/body_text/retrieval_text/token_count/content_sha256`；JSONB分别保存`heading_path/page_numbers/source_block_ids/source_spans/bounding_boxes/overlap_json/table_json/warnings`。数据库要求JSON类型与数组长度符合M2-12上限，`text`不得携带表格对象，`table`必须携带含`source_kind`和`rows`的对象；同一Chunk Set内`chunk_id`和`chunk_index`分别唯一，ID/Hash/Token/序号格式均有检查约束；
-6. FTS设计：新增独立非空`fts_text`，与保留原语义和定位上下文的`retrieval_text`分责；`search_vector`是PostgreSQL持久生成列，表达式固定为`to_tsvector('simple', fts_text)`并建立GIN索引。M2-13只用固定英文合成词验证数据库能力；中文分词文本怎样生成属于M2-17，不在本步伪装完成；
+6. FTS设计：新增独立非空`fts_text`，与保留原语义和定位上下文的`retrieval_text`分责；`search_vector`是PostgreSQL持久生成列，表达式固定为`to_tsvector('simple', fts_text)`并建立GIN索引。M2-13只用固定英文合成词验证数据库能力；当时路线图把中文分词安排在M2-17，现已并入M2-16.2/16.5，本步不伪装完成；
 7. 向量设计：`embedding`类型为可空`vector(1024)`，建立`vector_cosine_ops`余弦HNSW索引；`embedding_model/embedding_version`只能与非空向量同时存在，空向量行三者必须全部为空。这样正式演示库没有假Embedding，同时给M2-14的固定模型/revision留出审计位置；
 8. 修改文件与职责：
    - `app/models/knowledge.py`：新增`DocumentChunk`、Chunk Set四列唯一引用键、双重复合外键、Chunk字段/JSONB/约束、生成FTS列、`vector(1024)`和三类索引；
@@ -2292,7 +2289,7 @@ M2-12已经完成。下一步M2-13才会建立`document_chunks`、FTS和`vector(
 15. 能证明：数据库可以逐行保存M2-12文本/表格Chunk及引用定位；普通身份列和复合外键能阻止已覆盖的错挂；Chunk唯一性、格式、text/table结构和1024维度有数据库硬约束；FTS生成列、GIN、可空向量和余弦HNSW可真实创建和运算；迁移可往返且M1/正式Seed未退化；
 16. 不能证明：正式35个Golden Chunk已经导入数据库、BGE-M3已经生成真实向量、Embedding质量/性能有效、Chunk Set统计和逐行写入已由Service原子协调、中文分词、关键词/Dense/混合检索、ACL/active/soft-delete查询过滤、RRF、Reranker、RAG回答或前端已经实现。小规模固定向量排序也不能证明大数据量HNSW召回率或性能；图文DOCX页眉/图片文字仍为0/2，未在本步修复；
 17. 过程中发现并修复：可空JSONB最初把Python `None`绑定成JSON字面量`null`，改为`JSONB(none_as_null=True)`后与SQL `NULL`约束一致；PostgreSQL三值逻辑曾让`kind=table/table_json=NULL`的CHECK返回未知并漏过，现显式要求table分支`table_json IS NOT NULL`，真实拒绝测试锁定该边界；
-18. 风险与排查：合法Chunk插入失败先查四个身份列和Chunk Set四列引用键，再查JSON是否使用真实数组/对象而非JSON `null`；FTS不命中中文先查未来M2-17是否生成应用层分词`fts_text`，不要覆盖`retrieval_text`；向量写入失败先查维度是否恰为1024、模型/版本是否同时提供；余弦排序异常先查运算符类和查询向量；删除后残留先查两个FK的`ON DELETE CASCADE`及是否绕过正式迁移；索引不存在先查pgvector 0.8.6、迁移头和`pg_indexes`，不要手工补建掩盖迁移漂移。
+18. 风险与排查：合法Chunk插入失败先查四个身份列和Chunk Set四列引用键，再查JSON是否使用真实数组/对象而非JSON `null`；FTS不命中中文先查现M2-16.2/16.5是否生成应用层分词`fts_text`，不要覆盖`retrieval_text`；向量写入失败先查维度是否恰为1024、模型/版本是否同时提供；余弦排序异常先查运算符类和查询向量；删除后残留先查两个FK的`ON DELETE CASCADE`及是否绕过正式迁移；索引不存在先查pgvector 0.8.6、迁移头和`pg_indexes`，不要手工补建掩盖迁移漂移。
 
 **停止点**
 
@@ -2556,7 +2553,7 @@ index_set_id = UUIDv5(
 2. 用`CanonicalChunkArtifact.model_validate_json`重新验真，并逐项核对tenant/document/version、Chunk Set ID、输出Hash和统计；
 3. 按Artifact中已经连续的`chunk_index=1..N`构造`texts = [chunk.retrieval_text, ...]`；Embedding使用`retrieval_text`，因为它在`body_text`之外明确加入标题路径、Sheet/范围等检索上下文，M2-12就是为语义检索设计该字段；`body_text`仍原样保存供未来引用；
 4. 调用`provider.embed(texts, purpose=DOCUMENT)`；Provider已校验向量数量和顺序，Mapper再用`zip(chunks, vectors, cache_keys, strict=True)`逐个配对，并重新计算每个cache key，防止调用边界错位；
-5. `fts_text`在M2-15固定为`retrieval_text`的原样V1视图，并把`m2-fts-raw-retrieval-v1`写入Index Set身份；这只填充M2-13已存在的生成列，不实现关键词查询或中文分词。M2-17若改变构建规则，将产生新的Index Set身份；
+5. `fts_text`在M2-15固定为`retrieval_text`的原样V1视图，并把`m2-fts-raw-retrieval-v1`写入Index Set身份；这只填充M2-13已存在的生成列，不实现关键词查询或中文分词。当时路线图称M2-17，现M2-16.2改变构建规则时将产生新的Index Set身份；
 6. 行ID使用`UUIDv5(index_set_id + chunk_id)`，JSONB字段直接使用M2-12严格模型的`model_dump(mode="json")`，不手工重解释定位和表格；
 7. 插入前后都验证Chunk数量、连续序号、模型/revision和Index Set身份，唯一约束作为最后一道防重复保护。
 
@@ -2894,3 +2891,250 @@ V1推荐同步API：请求会等到本次索引成功或失败后再返回。原
 14. 风险与优先排查：正式脚本前置失败先查`DOCLING_BACKEND=docling`和本地Docling manifest，不要联网下载；BGE Smoke失败先查固定snapshot/revision、离线变量、内存与M2-14 batch降级；重复请求若Chunk或Provider调用增长，先查Index Set身份、ready行统计和Artifact Hash；清理不一致先查报告中的publication keys和三个active指针，不能扩大删除范围；长期indexing先查进程崩溃与attempt，再按V1人工恢复流程处理；
 15. 阶段完成标准结论：M2-15.1至15.6全部完成并实际验证；幂等索引、普通失败重试、完整成品原子激活、模型/revision/Chunk Set审计、租户/文档/版本隔离、最小API、Fake全量与真实BGE小型Smoke均有证据；没有提前实现M2-16/17；
 16. 下一步与停止点：M2-15至此完成。当前授权不包含M2-16；必须先提交M2-16实施方案并取得用户明确确认，才能开始任何关键词、Dense或混合检索开发。本步完成后立即停止。
+
+### 2026-08-31｜Git同步后本机环境恢复与全量复验
+
+**状态：已完成；不改变M2-15已完成和M2-16待确认边界。**
+
+1. 目标与现状：从`origin/main`快进到`5c20cf2`后，本机虚拟环境缺少`pgvector/jieba/FlagEmbedding`，Docker Desktop未启动，数据库仍在`20260829_0004`，固定BGE-M3快照不存在，因此不能直接验证最新索引代码；本步只恢复本机运行与验证基线，不开发检索功能；
+2. 大白话运行过程：先把依赖补全，再启动项目数据库并补齐三次迁移；随后用项目自带脚本下载固定版本的BGE-M3，强制离线加载并生成真实向量；最后从后端到真实浏览器完整跑一遍测试。全量首次失败后没有跳过数据库约束，而是确认测试把固定`started_at`与数据库当前`created_at`混用，只补回它已经定义但漏写的固定创建时间；
+3. 修改文件与职责：`tests/integration/test_document_chunk_set_migration.py`在测试插入值中显式加入既有`created_at`，消除UTC 10:01之后运行必失败的时间依赖，继续验证`started_at >= created_at`约束；`docs/progress/M2_KNOWLEDGE_RAG.md`与`docs/PROJECT_PROGRESS.md`记录本机恢复、修复和验证证据。BGE快照位于Git忽略的`data/model-cache`，匿名报告位于Git忽略的`output/m2_embedding_benchmarks/local.json`；
+4. 完整调用链位置：环境门禁覆盖`前端 → API → Pydantic Schema → Service/LangGraph/Harness或DocumentIndexService → EmbeddingProvider/Repository → Model → PostgreSQL/pgvector`。测试夹具修复只作用于Model/PostgreSQL迁移约束测试，不修改生产调用链、迁移或业务数据合同；
+5. 基础设施与迁移验证：Docker Desktop恢复后`deep-search-postgres`为healthy，`pg_isready`接受连接，数据库`vector`扩展为0.8.6；Alembic实际从`20260829_0004`依次升级`0005/0006/0007`，最终`current=20260831_0007 (head)`且`alembic check`为`No new upgrade operations detected`；
+6. BGE验证：显式下载并校验固定`BAAI/bge-m3@5617a9f61b028005a4858fdac845db406aefb181`快照，重组后约2.30 GB。真实基准中文相关/无关相似度为`0.840595 > 0.348997`，跨语言为`0.731607 > 0.308162`；强制离线Embedding Smoke为`2 passed in 50.71s`，真实`DocumentIndexService → PostgreSQL/pgvector`单文档索引、幂等复用与清理Smoke为`1 passed in 32.06s`；
+7. 后端验证：首次全量为`1 failed, 515 passed, 8 skipped`，失败精确落在Chunk Set迁移测试的固定时间夹具；最小修复后该文件`2 passed`、Ruff通过，最终全量为`516 passed, 8 skipped in 110.52s`。8项跳过分别来自2项默认关闭的BGE Embedding、1项默认关闭的BGE索引、1项付费Qwen、2项显式Docling和2项当前Windows符号链接权限；BGE三项已在本步显式单独通过；
+8. 前端与端到端验证：Vitest组件`4 passed`，TypeScript `tsc --noEmit`、ESLint和Next.js 16.3.3生产构建通过；清理组合脚本遗留的精确Uvicorn进程后，Chromium `4 passed`，覆盖德国库存/Evidence成功、法国账号跨市场403、无效Token 401，以及PostgreSQL中断时安全500与自动恢复；
+9. 能证明与不能证明：能证明当前电脑的依赖、PostgreSQL/pgvector、最新迁移、固定BGE本地权重、真实向量生成、真实单文档索引、默认后端回归、前端构建和M1浏览器闭环可运行；不能证明付费Qwen真实调用、当前Windows符号链接能力、M2复杂Docling显式Smoke、GPU性能、10文档真实BGE语义质量或任何尚未实现的关键词/Dense/混合/RRF/Reranker/RAG质量；
+10. 风险与排查：迁移导入失败先查虚拟环境`pgvector`；数据库不可用先查Docker Desktop、容器health和5433；BGE失败先查固定manifest/revision、约2.30 GB快照、离线变量和内存；Chunk Set时间约束失败先比较测试显式`created_at/started_at`，不得放宽生产约束；Playwright启动失败先查8000/3000占用并只终止命令行明确属于本项目的遗留进程；
+11. 下一步与停止点：本机已经具备继续讨论下一阶段的运行基线，但当前授权仍不包含M2-16代码。M2-16必须先提交实施方案并由用户明确确认，不能因环境恢复而自动开始。
+
+### 2026-08-31｜M2-16-PLAN｜权限前置的混合检索闭环
+
+**状态：进行中；M2-16.1已完成，等待用户确认M2-16.2。2026-08-31范围修订把原路线图中分散在M2-16至M2-18的Dense、Lexical和RRF合并为当前M2-16内部小步骤；第7节已同步为同一套有效编号。用户对M2-16的确认不授权新M2-17 Reranker、RAG或任何后续阶段。**
+
+#### 1. 当前现状和真正缺少的能力
+
+M2-15已经能把文档解析、分块、生成Embedding并写入`document_chunks`。数据库也已经有`search_vector`的GIN索引和`embedding vector(1024)`的HNSW余弦索引。但是系统现在只会“把书放上书架”，还不会根据用户问题“从书架找出有权限阅读的几页”。现有应用没有search、lexical、dense、hybrid、RRF、rerank或RAG路由；`app/services/retrieval/`只有Embedding Provider。
+
+当前`fts_text`直接保存原始`retrieval_text`，版本为`m2-fts-raw-retrieval-v1`。英文可依靠空格分词，连续中文用PostgreSQL `simple`配置时可能无法按“亮度”等子词命中。因此，中文关键词检索必须在文档入库和用户查询两边使用同一套、固定版本的jieba分词规则。只给查询分词不能修复已经按整段中文建立的旧词条。
+
+当前访问规则为：同租户内文档owner、`company_owner`，或命中user/role/market ACL的用户可读；`access_level`目前不额外赋予tenant全员读取权。检索继续复用这一规则，不在M2-16偷偷改变业务权限。
+
+#### 2. M2-16目标
+
+1. Lexical Retrieval（关键词检索）：用版本化中文分词和PostgreSQL FTS找出字面命中的Chunk；
+2. Dense Retrieval（语义检索）：把用户问题按`QUERY`用途生成BGE-M3或Fake向量，再用pgvector余弦距离找出意思接近的Chunk；
+3. Hybrid Retrieval（混合检索）：同时取得两路候选，不让单一检索方式决定全部结果；
+4. RRF（按两个候选榜单名次稳定融合）：按`1 / (k + rank)`合并名次，默认`k=60`，不直接相加量纲不同的FTS分数和余弦分数；
+5. 在SQL候选集合中固定tenant、Document ACL、市场、active Document Version、active ready Index Set、未软删除和完整Embedding身份过滤；
+6. 返回可以解释和复算的来源定位、两路原始排名/分数、RRF分数、模型revision和FTS builder版本。
+
+#### 3. 本阶段明确不做
+
+- 不实现BGE Reranker；
+- 不调用Qwen生成答案，不实现RAG答案、引用或Evidence持久化；
+- 不接入聊天、LangGraph、Agent Tool或Harness；
+- 不新增前端检索页面；
+- 默认不新增临时HTTP搜索路由，先以内部Service和真实PostgreSQL集成测试证明稳定合同；
+- 不实现后台队列、Worker、租约、分布式任务、MCP、真实Amazon SP-API；
+- 不自动开始M2-17或后续工作。
+
+#### 4. 前置条件与已确认决策
+
+- Git保持`main`和基线提交`5c20cf2`；保留现有3个未提交修改，不提交、不回退；
+- PostgreSQL 17.11、pgvector 0.8.6保持healthy，Alembic为`20260831_0007 (head)`；
+- 固定真实模型为`BAAI/bge-m3@5617a9f61b028005a4858fdac845db406aefb181`，日常测试默认使用Fake；
+- 2026-08-31已幂等恢复正式Seed，实际计数为10 files、10 documents、10 document_versions、9 document_acl，0 Chunk Set、0 Index Set、0 Chunk、0 active指针；这证明后续可以从正式干净基线启动索引，不证明检索已经可用；
+- Dense查询Embedding失败时返回安全、可重试的检索失败，不悄悄降级成关键词结果；否则调用者会误把“不完整混合检索”当成完整成功；
+- M2-16的“可审计”是响应中保留可复算的身份、排名、分数和来源，不新增Retrieval Run/Evidence数据库表；持久化审计留给后续Context/Evidence阶段。
+
+#### 5. 数据流
+
+```text
+可信RunContext中的tenant/user/role/market
+                    + 用户query
+                           |
+             先建立同一份获权active候选边界
+                           |
+        +------------------+------------------+
+        |                                     |
+        v                                     v
+jieba同版分词 -> PostgreSQL FTS       QUERY用途 -> EmbeddingProvider
+        |                                     |
+ Lexical top-30                      pgvector cosine top-30
+        |                                     |
+        +------------------+------------------+
+                           v
+                 按chunk_id去重并执行RRF
+                           v
+       返回final rank、两路分数分解和Source Locator
+```
+
+文档侧在索引时使用`DOCUMENT`用途生成并保存Embedding；查询侧使用`QUERY`用途临时生成查询向量。Fake Provider只证明调用、维度和确定性，不证明语义好坏；固定向量集成测试证明pgvector排序；显式本地BGE Smoke才证明真实语义模型能接入查询链。
+
+#### 6. 权限与数据隔离策略
+
+Repository的Dense和Lexical查询必须复用同一个基础获权条件，且在排序和`LIMIT`之前应用：
+
+1. `tenant_id`等于可信RunContext，不接受请求体传入tenant；
+2. Document和StoredFile都未软删除，文件状态可用；
+3. `documents.active_version_id`等于当前Chunk的version；
+4. Version处于可检索状态，`active_index_set_id`指向当前ready Index Set；
+5. Chunk必须属于这个active Index Set；
+6. 用户为owner、company_owner，或命中user/role/market ACL之一；
+7. Dense还要求Chunk的provider/model/revision/dimension/normalize等身份与本次Query Provider完全一致。
+
+调用者不能传role、market、ACL、version_id、index_set_id、向量、SQL或模型本地路径。跨tenant、旧版本、失败索引、未激活索引、软删除文档和无权文档统一不会进入候选集。
+
+#### 7. 输入、输出和错误合同
+
+- 输入：严格Schema，核心只有`query`，长度建议1至2000字符；候选数量使用服务端配置，最多只允许安全上限，不允许客户端扩大权限或任意控制SQL；
+- 输出：候选Chunk的document/version/index/chunk公开ID、标题、类型、语言、市场、正文、页码/标题路径/Sheet/单元格或行范围等Source Locator、final rank；同时返回dense rank/余弦距离或相似度、lexical rank/FTS score、RRF score、Embedding身份和FTS builder版本；
+- 不输出：tenant内部字段、ACL明细、Storage Key、真实磁盘路径、1024维向量、SQL、数据库异常或本地模型路径；
+- 错误：空白/超长输入为安全校验错误；Provider不可用、向量身份不匹配、数据库超时/不可用为类型化安全错误；合法但没有命中返回空候选，不把无结果当系统故障；任何一路内部失败不返回伪装成完整Hybrid的200结果。
+
+#### 8. 按顺序执行的单一职责小步骤
+
+##### M2-16.1｜冻结检索合同、配置和错误
+
+- 目标：只定义“可以问什么、返回什么、怎样安全失败”，不写SQL；
+- 预计文件：新增`app/schemas/retrieval.py`、`app/services/retrieval/errors.py`、`tests/unit/test_retrieval_contracts.py`；按实际需要小改`app/core/config.py`和`tests/unit/test_config.py`；
+- 调用链位置：未来API/Tool → **Schema（本步）** → 未来Service；前端、API、Repository、Model、PostgreSQL均不经过；
+- 验证：严格字段、空白/超长query、候选上限、公开结果字段、分数有限值、来源定位和错误脱敏的单元测试；Ruff、Mypy、编译和基线哨兵；
+- 能证明：边界合同稳定；不能证明数据库能检索或权限正确。
+
+##### M2-16.2｜建立版本化中文FTS构建器和迁移0008
+
+- 目标：让文档侧和查询侧都使用固定jieba规则，并允许旧、新FTS builder版本共存；
+- 预计文件：新增`app/services/retrieval/lexical_text.py`、`migrations/versions/20260831_0008_*.py`、`tests/unit/test_lexical_text.py`、`tests/integration/test_document_chunk_fts_migration.py`；修改`app/schemas/document_chunks.py`、`app/services/documents/indexing.py`或其Mapper合同、`app/models/documents.py`及相关测试；
+- 调用链位置：Index Service/未来Lexical Service → FTS Builder → Mapper/Model → PostgreSQL generated search_vector + GIN；不经过前端或HTTP API；
+- 验证：中文、英文、SKU、型号、条款号两边同规则；jieba版本和配置固定；`0007→0008→0007→0008`往返；旧Index Set仍合法，新Index Set使用新版；新成品ready前active不切换；
+- 能证明：中文词条可被一致构建；不能证明Hybrid排序质量。
+
+##### M2-16.3｜建立共享获权active候选Repository
+
+- 目标：Dense和Lexical只能从同一套获权、active、ready数据集合取候选，避免两路权限写法漂移；
+- 预计文件：新增`app/repositories/retrieval.py`、`tests/integration/test_retrieval_repository_scope.py`；按需要从`app/repositories/documents.py`提取并复用只读访问条件；
+- 调用链位置：未来Retrieval Service → **Repository（本步）** → Document/Version/ACL/Index Set/Chunk Model → PostgreSQL；
+- 验证：owner、company_owner、user/role/market ACL允许；跨tenant、无ACL、市场不交集、旧version、非active/failed Index Set、软删除Document/File全部为零候选；
+- 能证明：数据库候选边界正确；不能证明查询向量或RRF。
+
+##### M2-16.4｜实现Dense检索
+
+- 目标：使用`QUERY`用途生成查询向量，在获权候选中按pgvector余弦距离取前N名；
+- 预计文件：新增`app/services/retrieval/dense.py`、`tests/unit/test_dense_retrieval.py`、`tests/integration/test_dense_retrieval.py`；修改`app/repositories/retrieval.py`和`app/services/retrieval/__init__.py`；
+- 调用链位置：内部调用者 → Schema → Dense Service → EmbeddingProvider(QUERY) → Retrieval Repository → Model → PostgreSQL/pgvector；不经过前端和HTTP API；
+- 验证：Fake用于调用和错误边界；固定1024维归一化向量在真实PostgreSQL证明排序、top-N、稳定tie-break和身份过滤；Provider/DB故障安全失败；
+- 能证明：pgvector真实排序和权限同时生效；Fake不能证明真实语义质量，小数据不能证明大规模HNSW召回。
+
+##### M2-16.5｜实现Lexical检索
+
+- 目标：把query按与索引相同的版本分词，在获权候选中使用PostgreSQL FTS排序；
+- 预计文件：新增`app/services/retrieval/lexical.py`、`tests/unit/test_lexical_retrieval.py`、`tests/integration/test_lexical_retrieval.py`；修改`app/repositories/retrieval.py`；
+- 调用链位置：内部调用者 → Schema → Lexical Service → jieba/Repository → Model → PostgreSQL FTS/GIN；不经过Embedding、前端和HTTP API；
+- 验证：中文“亮度”、英文、SKU、型号、数字和无结果；所有权限/active过滤与Dense一致；`EXPLAIN`只确认GIN索引可用，不强求小表一定选择索引；
+- 能证明：真实PostgreSQL关键词命中；不能证明Dense或最终融合质量。
+
+##### M2-16.6｜实现Hybrid和RRF
+
+- 目标：并列运行两路检索，按chunk_id去重，用固定`rrf_k=60`合并名次并保留分数分解；
+- 预计文件：新增`app/services/retrieval/hybrid.py`、`tests/unit/test_rrf.py`、`tests/integration/test_hybrid_retrieval.py`；修改检索Schema导出；
+- 调用链位置：内部调用者 → Schema → Hybrid Service → Dense + Lexical → RRF → 安全结果；底层两路继续进入Embedding/Repository/Model/PostgreSQL；
+- 验证：只在单路命中、两路命中、重复Chunk、同分tie-break、空结果和一路故障时均有确定行为；结果权限集合不得超过两路获权候选并集；
+- 能证明：融合公式、顺序和分数可复算；不能证明Reranker或回答质量。
+
+##### M2-16.7｜真实闭环验收和阶段收口
+
+- 目标：用正式合成文档建立临时索引，验证检索后精确恢复干净Seed；
+- 预计文件：新增`scripts/verify_m2_retrieval.py`、`tests/unit/test_m2_retrieval_verification.py`、`tests/smoke/test_m2_retrieval_bge_smoke.py`；修改`tests/unit/test_m2_baseline.py`及两份进度文档；
+- 调用链位置：验证脚本 → Retrieval Schema/Hybrid Service → Query Embedding + Retrieval Repository → Model → PostgreSQL FTS/pgvector；仍不经过前端、HTTP API、Reranker、Qwen、Evidence或Agent；
+- 验证：Fake 10文档日常闭环、固定向量数据库排序、显式离线BGE小型语义Smoke、跨权限/版本/删除故障矩阵、`EXPLAIN`索引可用性、全量后端质量门；最后只清理本次生成物并恢复10/10/10/9和0索引行；
+- 能证明：当前规模真实数据库闭环和确定性；不能承诺百万Chunk、并发负载、生产延迟、HNSW全量召回率或最终RAG答案质量。
+
+#### 9. 阶段完成标准
+
+1. 中文关键词、Dense语义和RRF混合检索全部通过真实PostgreSQL验证；
+2. tenant、owner/company_owner、user/role/market ACL、active Version、active ready Index Set、软删除和Embedding身份在排序前生效；
+3. 旧版、失败、未激活、跨tenant和无权限Chunk不会进入任何候选榜单；
+4. 结果包含安全来源定位、两路名次/分数和RRF分解，不泄露内部字段；
+5. 日常测试默认Fake，固定向量负责数据库顺序，真实BGE只由显式Smoke加载且强制离线；
+6. 迁移、Ruff、Mypy、编译、依赖、聚焦测试和后端全量通过，正式Seed精确恢复；
+7. 没有实现Reranker、Qwen回答、Evidence、Tool、Agent、前端或HTTP检索路由。
+
+#### 10. 主要风险和优先排查
+
+- 中文搜不到：先比较文档侧与查询侧的builder版本、jieba版本、HMM配置和最终分词文本，再查GIN/tsquery；
+- Dense结果异常：先查`DOCUMENT/QUERY`用途、1024维、归一化、model/revision和cache key，再查余弦操作符与排序方向；
+- 权限泄露：先比较Dense/Lexical是否共用同一access clause，以及过滤是否发生在`ORDER BY/LIMIT`之前；
+- 旧数据被搜到：先查Document active Version和Version active Index Set两级连接，不只看Chunk自身ready字段；
+- 小表不走HNSW/GIN：先用`EXPLAIN`确认索引可用，再区分优化器合理选择顺序扫描和索引定义错误；不能为了让测试好看而关闭正常优化器行为；
+- Fake语义看似错误：Fake只保证确定性，不保证近义句排名；语义判断必须看显式BGE Smoke；
+- Provider故障：返回类型化可重试错误，不把Lexical单路伪装成完整Hybrid成功。
+
+#### 11. 确认记录、当前结果与明确停止点
+
+用户在完整方案和通俗解释后两次回复“继续”，视为确认上述M2-16范围与默认决策。确认后的第一个动作原计划是恢复正式Seed；用户中断命令后只读核对确认事务实际已经完成，当前为10 files、10 documents、10 versions、9 ACL，0 Chunk Set、0 Index Set、0 Chunk、0 active指针。随后用户指出应先更新文档，因此当前只补齐确认与方案记录，不开始生产代码。
+
+M2-16.1与M2-16.2已经按下方步骤日志完成。**当前必须停止并等待用户确认；只有再次明确授权后才可进入M2-16.3。当前确认不授权M2-16.3自动开始，更不授权Reranker、RAG、前端、Agent或M2-17。**
+
+### 2026-08-31｜M2-16.1｜冻结检索合同、配置和安全错误
+
+**状态：已完成；已验证；明确停止在M2-16.1。**
+
+1. 本步解决的问题：M2-15只有“文档如何被索引”的内部事实，没有规定未来Dense、Lexical和Hybrid“允许接收什么、必须返回什么、怎样安全失败”。本步先冻结共同边界，避免后续三路各自发明字段、用非法数字伪装未命中，或把SQL、路径和数据库原始异常带到公开响应；
+2. 大白话运行过程：未来调用者只交一段`query`；tenant、用户、角色、市场、ACL、版本、Index Set、向量、SQL和候选数量都不能从请求体伪造。未来Service会按本步集中配置取候选，并把每个Chunk的公开身份、文档信息、正文、来源位置和真实命中分数装入同一份响应。本步只定义这只“安全标准箱子”和固定错误说明，还没有去数据库找任何Chunk；
+3. 输入合同：`RetrievalRequest`继承项目现有严格Schema，先去除首尾空白，再要求1至2000字符且拒绝任何额外字段。2000是代码级硬上限；运行配置新增`retrieval_query_max_characters=2000`，未来Service可以在硬上限内进一步收紧。请求不接受候选数量，Dense、Lexical和Hybrid最终候选默认均为30、合法上限100；`hybrid_candidate_count`不得大于两路候选之和，Reranker top-k不得大于任一路或Hybrid候选数，`rrf_k`保持60；
+4. 输出合同：公开候选只含document/version/index_set/chunk UUID，文档标题、类型、语言、市场和Chunk正文。PDF、DOCX、XLSX、CSV分别使用有辨别字段的类型化Source Locator，能表达页码/多页、标题路径、块/段落/表格、Sheet、单元格范围和行范围，且拒绝Storage Key等额外字段；
+5. 分数决定：`dense`与`lexical`为可选分解，至少一路真实命中；未进入某一路榜单明确使用`None`，不用0、负排名或无穷大冒充。所有公开浮点数使用有限值合同，拒绝NaN和正负Infinity；所有榜单名次和最终名次从1开始。Dense按当前pgvector余弦定义限制distance为0至2、similarity为-1至1，两者同时出现时必须满足`similarity = 1 - distance`；Lexical的具体FTS归一化公式要到M2-16.5才冻结，因此本步只限制为有限值，不凭空设置上限；RRF分数必须为正有限值，Hybrid要求两种索引身份、`rrf_k`和每项RRF分数，最终名次必须连续；
+6. 错误边界：新增检索输入错误、Embedding Provider不可用、Embedding身份不匹配、数据库不可用、数据库超时和检索内部失败六个专用异常类。构造器不接收原始异常文本，只生成固定公开中文消息；新增通用`DATABASE_UNAVAILABLE`公开错误码并映射未来HTTP 503，其余复用既有422/503/504/500语义。未来代码可以用异常链保留内部原因供日志排查，但`to_detail()`不会输出SQL、Storage Key、磁盘/模型缓存路径、环境变量或数据库连接信息；
+7. 实际修改文件与职责：
+   - `app/schemas/retrieval.py`：新增请求、候选/文档身份、四类来源定位、Dense/Lexical分解、Embedding/FTS身份、结果和按模式校验的统一响应；
+   - `app/services/retrieval/errors.py`：新增六类固定消息的类型化检索错误；
+   - `app/core/config.py`与`.env.example`：新增query硬上限、Hybrid最终候选数及候选组合校验；业务模块没有自行读取环境变量；
+   - `app/schemas/common.py`与`app/api/errors.py`：登记`DATABASE_UNAVAILABLE`并冻结其503映射；
+   - `app/schemas/__init__.py`与`app/services/retrieval/__init__.py`：从项目公共包入口导出新合同和错误；
+   - `tests/unit/test_retrieval_contracts.py`：覆盖严格输入、四类定位、分数/排名、三种模式、敏感字段和错误脱敏；
+   - `tests/unit/test_m2_baseline.py`：补充集中配置合法/非法组合并把阶段哨兵推进到“只有合同、没有检索执行”；
+   - `docs/progress/M2_KNOWLEDGE_RAG.md`与`docs/PROJECT_PROGRESS.md`：记录本步决定、验证、Seed恢复、风险和停止点；
+8. 完整调用链位置：未来链路是`前端或Agent Tool → 未来API/Tool → Retrieval Schema（本步） → 未来Retrieval Service → 未来Embedding/Repository → 现有Model → PostgreSQL`。本步实际只经过Schema、集中配置和错误边界；没有经过前端、HTTP API、检索Service编排、查询Embedding调用、Repository、Model或PostgreSQL查询；
+9. TDD证据：先新增合同测试，首次运行在收集阶段按预期因`ModuleNotFoundError: app.schemas.retrieval`失败，证明RED来自目标能力缺失。最小实现后第一次GREEN只剩1项配置样例失败：样例同时违反Reranker和Hybrid两个关系，校验器先报告前者；只把该测试的Reranker值改为合法5，让它单独验证Hybrid关系，没有放宽生产配置。最终聚焦合同与基线测试为`83 passed in 4.01s`，加入静态类型表达修正和余弦一致性断言后复跑仍为`83 passed`；
+10. 最终验证：后端全量`.venv\Scripts\python.exe -m pytest -q`为`554 passed, 8 skipped in 90.06s`，8项仍是既有显式Smoke/环境条件跳过；`.venv\Scripts\ruff.exe check app tests scripts migrations`全仓通过，本步9个代码/测试文件`ruff format --check`通过；全仓format check只报告用户原先保留的`tests/integration/test_document_chunk_set_migration.py`换行/格式差异，本步没有机械改写该文件。Mypy检查`app`及本步两份测试共105个源码文件通过；`compileall -q app tests scripts migrations`无错误；`pip check`为`No broken requirements found`；`git diff --check`通过；Alembic current/heads均为`20260831_0007 (head)`且`alembic check`无新操作，因此本步不需要迁移；
+11. Seed与基础设施恢复：全量测试按既有集成测试设计把共享演示Seed清理为0行，复核发现后只运行项目既有幂等模块入口`seed_m1 → seed_m2_files → seed_m2_complex_files`恢复，没有删除卷、清空数据库或Storage。最终只读结果为PostgreSQL 17.11 + pgvector 0.8.6容器healthy，10 files、10 documents、10 versions、9 ACL、10 parse pending、10 index pending、0 active Version、0 active Index Set、0 Chunk Set、0 Index Set、0 Chunk；Storage为10 uploads、0 parsed JSON、0 chunks JSON；M1 `LR-TL-MUSH-OR01 / DE-FRA`可售库存125；固定BGE快照8个必需文件与manifest均在本地，日常配置仍为Fake和`model_local_files_only=True`，本步从未加载真实模型；
+12. 能证明与不能证明：测试能证明公开合同拒绝伪造字段、空白/超长问题、非法排名、非有限分数、矛盾余弦值、错误模式组合和敏感内部字段，并能表达四类文档定位及单路未命中；能证明集中配置拒绝越界与非法组合，现有后端没有被公共导出和错误码修改破坏。它不能证明中文分词、FTS/GIN命中、pgvector查询排序、tenant/ACL/active过滤、两路RRF真实融合、性能或真实BGE语义质量，因为这些分别属于M2-16.2至M2-16.7；
+13. 风险与优先排查：未来请求422先看是否有多余tenant/limit等字段或query去空白后为空/超过配置；响应校验失败先看检索模式与Dense/Lexical/RRF字段是否一致、名次是否从1连续；Dense分数失败先核对是否误把inner product当余弦distance/similarity；中文分数范围不能在本步猜测，等M2-16.5按实际SQL冻结；错误泄露优先检查是否绕过专用错误、直接把`str(database_error)`写入响应；配置启动失败先比较Hybrid、两路候选和Reranker top-k关系；
+14. 下一步与停止点：M2-16.1已经完成并验证，当前明确停止。不得自动开始M2-16.2，不新增jieba分词器、0008迁移、Repository、SQL、Dense/Lexical/Hybrid Service、RRF实现或真实BGE加载；等待用户理解和明确确认后再继续。
+
+### 2026-08-31｜M2-16.2｜版本化中文分词和FTS Builder迁移
+
+**状态：已完成；已验证；明确停止在M2-16.2。**
+
+1. 本步解决的问题：原索引把整段`retrieval_text`原样交给PostgreSQL `simple`配置。英文和SKU可以按空白、标点拆开，但连续中文通常会被视作大词，未来查询“亮度”未必能命中文档里的“蘑菇灯亮度调节说明”。本步增加文档侧与未来查询侧共用的版本化中文词条构建器，并让数据库同时接受旧raw与新版索引代次；
+2. 大白话运行过程：文档入库前先经过同一台“固定切词机”，例如“蘑菇灯亮度调节说明”稳定变成`蘑菇 灯 亮度 调节 说明`，再保存到`fts_text`。PostgreSQL继续自动把`fts_text`生成`search_vector`并使用既有GIN索引。未来用户查询也必须走同一台切词机，这样两边使用相同词条；本步只准备这台机器及数据库版本边界，还没有编写正式关键词检索Service；
+3. Builder身份与确定性：新增`m2-fts-jieba-search-v1`，固定jieba `0.42.1`、随包词典SHA-256 `7197c3211ddd98962b036cdf40324d1ea2bfaa12bd028e68faa70111a88e12a8`、search模式、`HMM=False`、NFKC + casefold规范化和Unicode字母数字过滤。Builder使用独立Tokenizer，不接受运行期自定义词，不依赖jieba全局词典状态；词典文件、包版本或输入边界不符合合同都会安全失败；
+4. 文档与查询一致性：`FtsTextPurpose.DOCUMENT`和`QUERY`用于审计用途，但当前明确使用同一套规则。词条保持原顺序和词频，不去重；英文被统一为小写，全角字符被规范化，SKU、型号、数字和条款组成部分继续可搜索。输入必须是非空字符串，输入与输出均受2,000,000字符存储边界保护；
+5. 索引写入变化：`map_index_rows()`不再令`fts_text = retrieval_text`，而是调用共享Builder；`DocumentChunkWriteFacts`也用同一Builder复算并拒绝伪造词条。`retrieval_text`仍完整保留给展示、Embedding和后续RAG，只有独立的`fts_text`变成分词产物。Index Set确定性身份原本就包含`fts_builder_version`，因此新旧规则自然生成不同索引代次，不会把旧成品误当新版复用；
+6. 迁移决定：新增Alembic `20260831_0008`，只调整`document_index_sets`身份约束，允许`m2-fts-raw-retrieval-v1`和`m2-fts-jieba-search-v1`共存；没有新增列，也没有原地改写旧Chunk。旧ready索引可继续保持active，新版索引只有ready后才能通过既有复合外键切换active。降级前如果发现新版Index Set会明确拒绝，避免为了回到0007而静默删除或误解释新数据；
+7. 实际修改文件与职责：
+   - `app/services/retrieval/lexical_text.py`：实现固定身份、输入边界、独立jieba Tokenizer、锁、缓存和文档/查询共享入口；
+   - `app/services/retrieval/__init__.py`：从稳定公共入口导出FTS Builder合同；
+   - `app/services/documents/indexing/contracts.py`：将当前Index Set身份推进到新版Builder，并复算校验每行`fts_text`；
+   - `app/services/documents/indexing/mapping.py`：在索引Mapper中真正生成新版词条；
+   - `app/models/knowledge.py`：ORM约束同时描述旧raw与新版FTS身份；
+   - `migrations/versions/20260831_0008_versioned_jieba_fts.py`：升级新旧共存，降级遇到新版数据时安全拒绝；
+   - `requirements.txt`：将jieba从兼容范围固定为精确`0.42.1`；
+   - `scripts/verify_m2_index_pipeline.py`：索引验收改为按版本化Builder复核数据库`fts_text`；
+   - `tests/unit/test_lexical_text.py`：覆盖身份、依赖固定、中文/英文/SKU/型号/条款、规范化、顺序、词频、确定性和非法输入；
+   - `tests/unit/test_document_index_mapping.py`：验证Mapper使用新版身份与共享词条结果；
+   - `tests/integration/test_document_chunk_fts_migration.py`：验证迁移往返、旧新共存、active切换、数据库约束、真实FTS命中和安全降级；
+   - `tests/integration/test_document_index_service.py`：从真实索引Service落库结果断言新版身份与每个Chunk词条；
+   - `tests/unit/test_m2_baseline.py`：把阶段哨兵推进到“Builder和0008已存在，但候选Repository与检索执行仍不存在”；
+   - `docs/progress/M2_KNOWLEDGE_RAG.md`与`docs/PROJECT_PROGRESS.md`：同步本步决定、验证、Seed和停止点；
+8. 完整调用链位置：索引侧实际经过`DocumentIndexService（已有） → FTS Builder（本步） → Index Mapper/合同（本步修改） → DocumentChunk Model（已有，约束同步） → PostgreSQL generated search_vector + GIN（已有）`；迁移直接作用于Model到PostgreSQL的Index Set身份边界。查询侧目前只证明`QUERY → FTS Builder`能生成相同词条，尚未经过Retrieval Service、Repository或生产SQL。前端、HTTP检索API、Agent Tool、Dense、Hybrid/RRF、Reranker、Qwen和真实BGE都未经过；
+9. TDD RED证据：先写Builder与Mapper测试，首次收集按预期因`ModuleNotFoundError: app.services.retrieval.lexical_text`失败；最小实现后只剩Mapper样例少算一次标题中的“安全要求”，根据“保持词频”合同修正测试期望而未改生产逻辑，随后`16 passed`。再先写迁移和阶段边界测试，首次为`3 failed, 48 passed`，失败分别来自0008不存在、数据库拒绝新版身份和阶段哨兵找不到迁移，均准确指向待实现能力；
+10. 迁移调试记录：第一次创建约束时因Alembic命名约定对原始名称再次加前缀，实际要删除的约束没有找到；改用`op.f(...)`指明已格式化名称后转绿。新增安全降级测试时，测试清理顺序先删Tenant触发Version外键，只调整测试按依赖顺序删Version再删Tenant；该次失败留下的唯一测试tenant经只读UUID精确核对后定向删除并复核为0，没有清空数据库或Storage；
+11. 最终验证：Builder/Mapper首轮GREEN为`16 passed`；迁移与阶段边界为`51 passed`，安全降级单测为`3 passed`；包含合同、Model、迁移、Repository、索引Service与API的扩大聚焦集为`151 passed in 19.37s`，格式化后关键集复跑`79 passed in 12.54s`。后端全量`.venv\Scripts\python.exe -m pytest -q`为`568 passed, 8 skipped in 92.41s`，8项仍是显式Smoke或环境条件跳过；
+12. 工程质量与迁移验证：`.venv\Scripts\python.exe -m ruff check app migrations scripts tests`全仓通过，本步12个文件`ruff format --check`通过；Mypy检查`app`、验收脚本和相关测试共110个源文件为`Success: no issues found`；`compileall -q app migrations scripts tests`无错误；`pip check`为`No broken requirements found`，运行环境jieba确认为`0.42.1`；`git diff --check`通过。Alembic current与heads均为`20260831_0008 (head)`，`alembic check`为`No new upgrade operations detected`；PostgreSQL容器保持healthy；
+13. Seed与基础设施恢复：全量测试后只运行既有幂等入口`seed_m1 → seed_m2_files → seed_m2_complex_files`。最终只读事务显示`transaction_read_only=on`，PostgreSQL 17.11、pgvector 0.8.6，10 files、10 documents、10 versions、9 ACL，10 parse pending、10 index pending、0 active Version、0 active Index Set、0 Chunk Set、0 Index Set、0 Chunk、0非空Embedding；Storage为10 uploads、0 parsed JSON、0 chunks JSON、0其他对象；M1 `LR-TL-MUSH-OR01 / DE-FRA`可售库存125。本步没有加载BGE-M3，日常测试仍使用Fake Provider；
+14. 能证明与不能证明：测试能证明相同输入在文档与查询用途产生同版确定性词条，新索引Service真实保存新版词条，PostgreSQL约束允许旧新代次共存且阻止未知版本，新成品ready前不能切active，新版词条通过参数化FTS表达式能命中中文“亮度”，迁移可以安全往返且不会静默丢新版数据。它不能证明生产Lexical Repository的tenant/ACL/active候选边界、Top K排序、GIN在大数据下的执行计划、Dense/Hybrid/RRF效果、真实BGE语义、并发或生产延迟，因为这些属于M2-16.3至M2-16.7；
+15. 风险与优先排查：中文搜不到时先比较文档和query的`fts_builder_version`、最终`fts_text`、jieba版本与词典Hash，再看`search_vector`和tsquery；启动时报Builder错误先检查虚拟环境是否确切安装jieba 0.42.1及官方词典是否被改动；旧active索引中文效果不变是预期，必须重建新版Index Set并在ready后切换，不能原地伪装升级；迁移降级被拒绝时先找新版Index Set并走显式重建/清理方案，不能绕过保护；内存或延迟异常先看是否把超大正文绕过既有Chunk边界直接交给Builder；
+16. 下一步与停止点：M2-16.2已经完成并验证，当前明确停止。不得自动开始M2-16.3，不新增共享获权候选Repository、tenant/ACL/active过滤、Dense/Lexical生产查询、Hybrid/RRF、HTTP API或真实模型加载；等待用户理解和明确确认后再继续。

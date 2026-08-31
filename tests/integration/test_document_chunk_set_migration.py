@@ -151,6 +151,7 @@ def test_database_enforces_chunk_set_identity_status_and_tenant_boundaries(
         version_id=version_id,
         chunk_set_id=chunk_set_id,
     )
+    values["created_at"] = created_at
 
     with postgres_engine.connect() as connection:
         transaction = connection.begin()

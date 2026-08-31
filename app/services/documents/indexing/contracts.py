@@ -11,9 +11,13 @@ from pydantic import Field, model_validator
 from app.schemas.common import M1Schema
 from app.services.documents.chunking.contracts import canonical_sha256
 from app.services.retrieval import EmbeddingIdentity
+from app.services.retrieval.lexical_text import (
+    FTS_BUILDER_VERSION,
+    FtsTextPurpose,
+    build_fts_text,
+)
 
 INDEX_SCHEMA_VERSION: Literal["m2-document-index-set-v1"] = "m2-document-index-set-v1"
-FTS_BUILDER_VERSION: Literal["m2-fts-raw-retrieval-v1"] = "m2-fts-raw-retrieval-v1"
 INDEX_EMBEDDING_PURPOSE: Literal["document"] = "document"
 _INDEX_SET_NAMESPACE = uuid5(
     NAMESPACE_URL,
@@ -72,7 +76,7 @@ class DocumentIndexSetIdentity(M1Schema):
     embedding_model: str = Field(min_length=1, max_length=200)
     embedding_version: str = Field(min_length=1, max_length=100)
     embedding_purpose: Literal["document"] = INDEX_EMBEDDING_PURPOSE
-    fts_builder_version: Literal["m2-fts-raw-retrieval-v1"] = FTS_BUILDER_VERSION
+    fts_builder_version: Literal["m2-fts-jieba-search-v1"] = FTS_BUILDER_VERSION
 
     @model_validator(mode="after")
     def validate_hash_id_and_audit_fields(self) -> DocumentIndexSetIdentity:
@@ -127,8 +131,12 @@ class DocumentChunkWriteFacts(M1Schema):
     def validate_derived_fields(self) -> DocumentChunkWriteFacts:
         if self.id != uuid5(self.document_index_set_id, self.chunk_id):
             raise ValueError("chunk row ID does not match its deterministic identity")
-        if self.fts_text != self.retrieval_text:
-            raise ValueError("FTS text must be the raw retrieval text")
+        expected_fts_text = build_fts_text(
+            self.retrieval_text,
+            purpose=FtsTextPurpose.DOCUMENT,
+        ).text
+        if self.fts_text != expected_fts_text:
+            raise ValueError("FTS text does not match the versioned builder")
         if (self.kind == "table") != (self.table_json is not None):
             raise ValueError("table JSON must match the Chunk kind")
         return self
