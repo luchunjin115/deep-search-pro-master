@@ -97,7 +97,9 @@ class RoutedParseResult(M1Schema):
                 raise ValueError("Native route cannot contain a Docling result")
         elif self.docling_artifact is None or self.comparison is None:
             raise ValueError("enhanced routes require a Docling comparison")
-        elif self.route == "docling" and self.selected_artifact != self.docling_artifact:
+        elif (
+            self.route == "docling" and self.selected_artifact != self.docling_artifact
+        ):
             raise ValueError("Docling route must select the Docling artifact")
         elif self.route == "hybrid" and self.selected_artifact != self.native_artifact:
             raise ValueError("hybrid Office route must preserve Native facts")
@@ -175,9 +177,7 @@ class DocumentParserRouter:
             raise DocumentEnhancementError from None
 
         comparison = _compare(native_artifact, docling_artifact)
-        selected = (
-            docling_artifact if quality.route == "docling" else native_artifact
-        )
+        selected = docling_artifact if quality.route == "docling" else native_artifact
         return RoutedParseResult(
             route=quality.route,
             reasons=quality.reasons,

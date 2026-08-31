@@ -12,6 +12,7 @@ from app.services.documents.chunking import (
     ChunkerIdentity,
     ChunkingConfig,
     ChunkInputProvenance,
+    SkippedTableBlock,
     UnicodeMixedTokenCounter,
     build_chunk_artifact,
     build_document_chunk,
@@ -176,6 +177,24 @@ def test_config_change_creates_a_different_chunk_set_identity_and_output_hash() 
     assert first.config_sha256 != changed.config_sha256
     assert first.chunk_set_id != changed.chunk_set_id
     assert first.output_sha256 != changed.output_sha256
+
+
+def test_chunk_artifact_preserves_skipped_table_audit_in_its_hash() -> None:
+    artifact = build_chunk_artifact(
+        input_provenance=_input(),
+        chunker=_identity(),
+        config=ChunkingConfig(),
+        chunks=[_text_chunk()],
+        skipped_tables=[SkippedTableBlock(block_id="b000002", reason="empty_table")],
+    )
+
+    assert artifact.skipped_tables == [
+        SkippedTableBlock(block_id="b000002", reason="empty_table")
+    ]
+    tampered = artifact.model_dump(mode="json")
+    tampered["skipped_tables"] = []
+    with pytest.raises(ValidationError, match="output hash"):
+        CanonicalChunkArtifact.model_validate(tampered)
 
 
 def test_chunk_and_artifact_hashes_reject_tampering() -> None:

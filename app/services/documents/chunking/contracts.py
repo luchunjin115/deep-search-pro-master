@@ -124,7 +124,11 @@ class ChunkSourceSpan(M1Schema):
 
 
 class ChunkTableRow(M1Schema):
-    """One source row retained with its cells and retrieval-context role."""
+    """One source row retained with its cells and retrieval-context role.
+
+    Headers and overlapped data rows can both be repeated as retrieval context.
+    The flag prevents a copied physical data row from looking like new source data.
+    """
 
     source_row_number: int = Field(ge=1, le=1_048_576)
     role: Literal["header", "data"]
@@ -136,8 +140,6 @@ class ChunkTableRow(M1Schema):
         columns = [cell.column_number for cell in self.cells]
         if columns != sorted(set(columns)):
             raise ValueError("chunk table cells must have unique ordered columns")
-        if self.repeated_as_context and self.role != "header":
-            raise ValueError("only table headers may be repeated as context")
         return self
 
 
@@ -229,6 +231,13 @@ class ExcludedChunkSpan(M1Schema):
     bounding_box: ArtifactBoundingBox | None = None
 
 
+class SkippedTableBlock(M1Schema):
+    """One Canonical table deliberately omitted under an explicit policy."""
+
+    block_id: str = Field(pattern=r"^b[0-9]{6}$")
+    reason: Literal["empty_table", "hidden_sheet"]
+
+
 class ChunkArtifactStatistics(M1Schema):
     """Self-validated aggregate counts for one Chunk Artifact."""
 
@@ -256,6 +265,10 @@ class CanonicalChunkArtifact(M1Schema):
         default_factory=list,
         max_length=1_100_000,
     )
+    skipped_tables: list[SkippedTableBlock] = Field(
+        default_factory=list,
+        max_length=100_000,
+    )
     statistics: ChunkArtifactStatistics
     output_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
@@ -275,6 +288,9 @@ class CanonicalChunkArtifact(M1Schema):
             chunk.chunk_index for chunk in self.chunks
         ] != list(range(1, len(self.chunks) + 1)):
             raise ValueError("chunk IDs and indexes must be stable and sequential")
+        skipped_ids = [item.block_id for item in self.skipped_tables]
+        if skipped_ids != list(dict.fromkeys(skipped_ids)):
+            raise ValueError("skipped table block IDs must be unique and ordered")
         for index, chunk in enumerate(self.chunks):
             if chunk.token_count > self.config.max_tokens:
                 raise ValueError("chunk exceeds its configured hard token maximum")
@@ -284,7 +300,10 @@ class CanonicalChunkArtifact(M1Schema):
                     or chunk.overlap.previous_chunk_id != expected_ids[index - 1]
                 ):
                     raise ValueError("chunk overlap must reference the previous chunk")
-                if chunk.overlap.token_count > self.config.overlap_tokens:
+                if (
+                    chunk.kind == "text"
+                    and chunk.overlap.token_count > self.config.overlap_tokens
+                ):
                     raise ValueError("chunk overlap exceeds its configured budget")
         text_count = sum(chunk.kind == "text" for chunk in self.chunks)
         table_count = sum(chunk.kind == "table" for chunk in self.chunks)
@@ -355,10 +374,12 @@ def build_chunk_artifact(
     config: ChunkingConfig,
     chunks: list[DocumentChunk],
     excluded_spans: list[ExcludedChunkSpan] | None = None,
+    skipped_tables: list[SkippedTableBlock] | None = None,
 ) -> CanonicalChunkArtifact:
     """Build and self-validate deterministic output without a runtime timestamp."""
 
     exclusions = excluded_spans or []
+    skipped = skipped_tables or []
     config_hash = canonical_sha256(config.model_dump(mode="json"))
     chunk_set_id = derive_chunk_set_id(
         input_provenance=input_provenance,
@@ -382,6 +403,7 @@ def build_chunk_artifact(
         "config_sha256": config_hash,
         "chunks": [chunk.model_dump(mode="json") for chunk in chunks],
         "excluded_spans": [span.model_dump(mode="json") for span in exclusions],
+        "skipped_tables": [table.model_dump(mode="json") for table in skipped],
         "statistics": statistics.model_dump(mode="json"),
     }
     return CanonicalChunkArtifact.model_validate(

@@ -38,10 +38,14 @@ def run_router_verification(settings: Settings) -> dict[str, Any]:
             key,
             artifact_to_markdown(result.native_artifact),
         )
-        docling_facts = evaluate_facts(
-            key,
-            artifact_to_markdown(result.docling_artifact),
-        ) if result.docling_artifact is not None else []
+        docling_facts = (
+            evaluate_facts(
+                key,
+                artifact_to_markdown(result.docling_artifact),
+            )
+            if result.docling_artifact is not None
+            else []
+        )
         selected_facts = evaluate_facts(
             key,
             artifact_to_markdown(result.selected_artifact),
@@ -71,7 +75,9 @@ def run_router_verification(settings: Settings) -> dict[str, Any]:
                     ],
                     "facts": docling_facts,
                     "facts_passed": sum(fact["passed"] for fact in docling_facts),
-                } if result.docling_artifact is not None else None,
+                }
+                if result.docling_artifact is not None
+                else None,
                 "selected": {
                     "provider": result.selected_artifact.parser.provider,
                     "content_sha256": result.selected_artifact.content_sha256,

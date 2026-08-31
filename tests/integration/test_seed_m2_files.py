@@ -98,7 +98,9 @@ def test_m2_source_generation_is_deterministic_and_locators_match_parsers() -> N
         assert b"PRIVATE KEY" not in source.content
         if source.definition["format"] in {"docx", "xlsx"}:
             with ZipFile(io.BytesIO(source.content)) as archive:
-                assert all(member.date_time == _FIXED_ZIP_TIME for member in archive.infolist())
+                assert all(
+                    member.date_time == _FIXED_ZIP_TIME for member in archive.infolist()
+                )
         for fact in source.definition["golden_facts"]:
             SourceLocator.model_validate(fact["locator"])
 
@@ -151,7 +153,9 @@ def test_m2_source_generation_is_deterministic_and_locators_match_parsers() -> N
         assert word.tables
         assert all(table.autofit is False for table in word.tables)
 
-    workbook = load_workbook(io.BytesIO(sources["supplier_quotes"].content), data_only=False)
+    workbook = load_workbook(
+        io.BytesIO(sources["supplier_quotes"].content), data_only=False
+    )
     try:
         assert workbook.sheetnames == ["供应商报价", "报价说明"]
         for sheet in workbook.worksheets:
@@ -305,7 +309,11 @@ def test_seed_rejects_a_conflicting_existing_storage_object(
     data = load_seed_definition(DEFAULT_SEED_PATH)
     source = generate_sources(data)[0]
     storage = LocalStorageBackend(postgres_settings.local_storage_root)
-    storage.put(source.storage_key, io.BytesIO(b"conflicting synthetic bytes"), "application/pdf")
+    storage.put(
+        source.storage_key,
+        io.BytesIO(b"conflicting synthetic bytes"),
+        "application/pdf",
+    )
     _clean_seed_rows(postgres_engine, data)
 
     try:

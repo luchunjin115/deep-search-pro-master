@@ -6,10 +6,17 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import ColumnElement, and_, exists, func, or_, select, true, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.orm import Session
 
 from app.models.identity import Role, User
-from app.models.knowledge import Document, DocumentAcl, DocumentVersion, StoredFile
+from app.models.knowledge import (
+    Document,
+    DocumentAcl,
+    DocumentChunkSet,
+    DocumentVersion,
+    StoredFile,
+)
 from app.repositories.common import apply_statement_timeout
 
 
@@ -476,6 +483,206 @@ class DocumentRepository:
                 parsed_storage_key=None,
             )
             .returning(DocumentVersion)
+        )
+        return self._session.scalar(statement)
+
+    def claim_chunk_set(
+        self,
+        *,
+        chunk_set_id: UUID,
+        tenant_id: UUID,
+        document_id: UUID,
+        version_id: UUID,
+        artifact_schema_version: str,
+        content_hash_version: str,
+        routed_schema_version: str,
+        canonical_schema_version: str,
+        source_sha256: str,
+        parsed_publication_sha256: str,
+        selected_artifact_content_sha256: str,
+        chunker_name: str,
+        chunker_version: str,
+        token_counter_name: str,
+        token_counter_version: str,
+        normalization_version: str,
+        config_json: dict[str, object],
+        config_sha256: str,
+        claimed_at: datetime,
+    ) -> DocumentChunkSet | None:
+        """Create-or-claim one exact deterministic Chunk Set without races."""
+
+        apply_statement_timeout(self._session, self._statement_timeout_ms)
+        identity = {
+            "id": chunk_set_id,
+            "tenant_id": tenant_id,
+            "document_id": document_id,
+            "document_version_id": version_id,
+            "artifact_schema_version": artifact_schema_version,
+            "content_hash_version": content_hash_version,
+            "routed_schema_version": routed_schema_version,
+            "canonical_schema_version": canonical_schema_version,
+            "source_sha256": source_sha256,
+            "parsed_publication_sha256": parsed_publication_sha256,
+            "selected_artifact_content_sha256": selected_artifact_content_sha256,
+            "chunker_name": chunker_name,
+            "chunker_version": chunker_version,
+            "token_counter_name": token_counter_name,
+            "token_counter_version": token_counter_version,
+            "normalization_version": normalization_version,
+            "config_json": config_json,
+            "config_sha256": config_sha256,
+        }
+        self._session.execute(
+            postgresql_insert(DocumentChunkSet)
+            .values(
+                **identity,
+                status="pending",
+                attempt_count=0,
+                created_at=claimed_at,
+            )
+            .on_conflict_do_nothing(index_elements=["id"])
+        )
+        statement = (
+            update(DocumentChunkSet)
+            .where(
+                DocumentChunkSet.id == chunk_set_id,
+                DocumentChunkSet.tenant_id == tenant_id,
+                DocumentChunkSet.document_id == document_id,
+                DocumentChunkSet.document_version_id == version_id,
+                DocumentChunkSet.status.in_(("pending", "failed")),
+                DocumentChunkSet.artifact_schema_version == artifact_schema_version,
+                DocumentChunkSet.content_hash_version == content_hash_version,
+                DocumentChunkSet.routed_schema_version == routed_schema_version,
+                DocumentChunkSet.canonical_schema_version == canonical_schema_version,
+                DocumentChunkSet.source_sha256 == source_sha256,
+                DocumentChunkSet.parsed_publication_sha256 == parsed_publication_sha256,
+                DocumentChunkSet.selected_artifact_content_sha256
+                == selected_artifact_content_sha256,
+                DocumentChunkSet.chunker_name == chunker_name,
+                DocumentChunkSet.chunker_version == chunker_version,
+                DocumentChunkSet.token_counter_name == token_counter_name,
+                DocumentChunkSet.token_counter_version == token_counter_version,
+                DocumentChunkSet.normalization_version == normalization_version,
+                DocumentChunkSet.config_json == config_json,
+                DocumentChunkSet.config_sha256 == config_sha256,
+            )
+            .values(
+                status="chunking",
+                attempt_count=DocumentChunkSet.attempt_count + 1,
+                output_sha256=None,
+                chunk_storage_key=None,
+                chunk_count=None,
+                text_chunk_count=None,
+                table_chunk_count=None,
+                total_token_count=None,
+                excluded_span_count=None,
+                error_message=None,
+                started_at=claimed_at,
+                completed_at=None,
+            )
+            .returning(DocumentChunkSet)
+        )
+        return self._session.scalar(statement)
+
+    def find_chunk_set(
+        self,
+        *,
+        chunk_set_id: UUID,
+        tenant_id: UUID,
+        document_id: UUID,
+        version_id: UUID,
+    ) -> DocumentChunkSet | None:
+        """Load one Chunk Set only inside its complete ownership boundary."""
+
+        apply_statement_timeout(self._session, self._statement_timeout_ms)
+        return self._session.scalar(
+            select(DocumentChunkSet).where(
+                DocumentChunkSet.id == chunk_set_id,
+                DocumentChunkSet.tenant_id == tenant_id,
+                DocumentChunkSet.document_id == document_id,
+                DocumentChunkSet.document_version_id == version_id,
+            )
+        )
+
+    def complete_chunk_set(
+        self,
+        *,
+        chunk_set_id: UUID,
+        tenant_id: UUID,
+        document_id: UUID,
+        version_id: UUID,
+        output_sha256: str,
+        chunk_storage_key: str,
+        chunk_count: int,
+        text_chunk_count: int,
+        table_chunk_count: int,
+        total_token_count: int,
+        excluded_span_count: int,
+        completed_at: datetime,
+    ) -> DocumentChunkSet | None:
+        """Publish final facts only while this exact Chunk Set is claimed."""
+
+        apply_statement_timeout(self._session, self._statement_timeout_ms)
+        statement = (
+            update(DocumentChunkSet)
+            .where(
+                DocumentChunkSet.id == chunk_set_id,
+                DocumentChunkSet.tenant_id == tenant_id,
+                DocumentChunkSet.document_id == document_id,
+                DocumentChunkSet.document_version_id == version_id,
+                DocumentChunkSet.status == "chunking",
+            )
+            .values(
+                status="ready",
+                output_sha256=output_sha256,
+                chunk_storage_key=chunk_storage_key,
+                chunk_count=chunk_count,
+                text_chunk_count=text_chunk_count,
+                table_chunk_count=table_chunk_count,
+                total_token_count=total_token_count,
+                excluded_span_count=excluded_span_count,
+                error_message=None,
+                completed_at=completed_at,
+            )
+            .returning(DocumentChunkSet)
+        )
+        return self._session.scalar(statement)
+
+    def fail_chunk_set(
+        self,
+        *,
+        chunk_set_id: UUID,
+        tenant_id: UUID,
+        document_id: UUID,
+        version_id: UUID,
+        error_message: str,
+        completed_at: datetime,
+    ) -> DocumentChunkSet | None:
+        """Clear unpublished results and close one claimed Chunk Set as failed."""
+
+        apply_statement_timeout(self._session, self._statement_timeout_ms)
+        statement = (
+            update(DocumentChunkSet)
+            .where(
+                DocumentChunkSet.id == chunk_set_id,
+                DocumentChunkSet.tenant_id == tenant_id,
+                DocumentChunkSet.document_id == document_id,
+                DocumentChunkSet.document_version_id == version_id,
+                DocumentChunkSet.status == "chunking",
+            )
+            .values(
+                status="failed",
+                output_sha256=None,
+                chunk_storage_key=None,
+                chunk_count=None,
+                text_chunk_count=None,
+                table_chunk_count=None,
+                total_token_count=None,
+                excluded_span_count=None,
+                error_message=error_message,
+                completed_at=completed_at,
+            )
+            .returning(DocumentChunkSet)
         )
         return self._session.scalar(statement)
 

@@ -1,0 +1,5 @@
+[format]
+exclude = [
+    "scripts/m2_seed_content.py",
+    "scripts/seed_m2_files.py",
+]

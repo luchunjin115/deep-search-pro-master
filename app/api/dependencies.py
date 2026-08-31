@@ -13,14 +13,18 @@ from app.core.errors import InvalidAccessTokenError, RequestTransactionError
 from app.db.session import DatabaseRuntime
 from app.llm.provider import ModelProvider, create_model_provider
 from app.repositories.conversation import ConversationRepository
+from app.repositories.documents import DocumentRepository
 from app.repositories.evidence import EvidenceRepository
 from app.repositories.files import FileRepository
 from app.repositories.identity import IdentityRepository
 from app.schemas.auth import CurrentUser
 from app.services.auth import AuthService
 from app.services.conversation import ConversationService
+from app.services.documents.indexing.service import DocumentIndexService
+from app.services.documents.service import DocumentService
 from app.services.evidence import EvidenceQueryService
 from app.services.files import FileService
+from app.services.retrieval import EmbeddingProvider, create_embedding_provider
 from app.services.storage import LocalStorageBackend, StorageBackend
 
 
@@ -144,6 +148,66 @@ def get_file_service(
 
 
 FileServiceDependency = Annotated[FileService, Depends(get_file_service)]
+
+
+def get_document_service(
+    session: DatabaseSession,
+    settings: AppSettings,
+    file_service: FileServiceDependency,
+) -> DocumentService:
+    """Build document metadata writes inside the request transaction."""
+
+    return DocumentService(
+        DocumentRepository(session, settings.database_statement_timeout_ms),
+        file_service,
+    )
+
+
+DocumentServiceDependency = Annotated[
+    DocumentService,
+    Depends(get_document_service),
+]
+
+
+def get_embedding_provider(
+    request: Request,
+    settings: AppSettings,
+) -> EmbeddingProvider:
+    """Lazily share the configured embedding provider within one application."""
+
+    provider: EmbeddingProvider | None = request.app.state.embedding_provider
+    if provider is None:
+        provider = create_embedding_provider(settings)
+        request.app.state.embedding_provider = provider
+    return provider
+
+
+EmbeddingProviderDependency = Annotated[
+    EmbeddingProvider,
+    Depends(get_embedding_provider),
+]
+
+
+def get_document_index_service(
+    runtime: DatabaseRuntimeDependency,
+    storage: StorageBackendDependency,
+    settings: AppSettings,
+    embedding_provider: EmbeddingProviderDependency,
+) -> DocumentIndexService:
+    """Assemble the synchronous M2 index pipeline from application resources."""
+
+    return DocumentIndexService(
+        runtime.session_factory,
+        storage,
+        settings,
+        embedding_provider,
+    )
+
+
+DocumentIndexServiceDependency = Annotated[
+    DocumentIndexService,
+    Depends(get_document_index_service),
+]
 
 
 def get_auth_service(

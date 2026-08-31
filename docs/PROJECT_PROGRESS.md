@@ -3,18 +3,18 @@
 > 本文档是项目进度的统一入口，只保存摘要和阶段链接。  
 > 每个阶段的方案、步骤日志和验证结果保存在 `docs/progress/`。  
 > 状态枚举：待确认、待开始、进行中、受阻、已完成。  
-> 最近更新：2026-08-30
+> 最近更新：2026-08-31
 
 ## 1. 当前状态
 
 | 项目 | 当前内容 |
 |---|---|
-| 当前阶段 | M2：知识库垂直切片（实施中） |
+| 当前阶段 | M2：知识库垂直切片（M2-15已完成） |
 | 阶段状态 | 进行中 |
-| 当前步骤 | M2-12.2“PDF/DOCX文本结构单元与切块”已完成；停止并等待是否开始M2-12.3 |
-| 已完成到 | M1已完成；M2已完成M2-01至M2-11及M2-12.1至M2-12.2；PDF/DOCX已具备确定性清洗、标题范围、跨页、重复页眉页脚、长段边界与同范围重叠切块，表格Block会明确延后而非静默丢弃 |
-| 下一动作 | 等待用户审阅M2-12.2结果并明确授权M2-12.3四类结构化表格切块；该授权不包含Chunk Set迁移、Storage发布、Embedding、索引或检索 |
-| 当前阻塞 | 无；图文DOCX页眉和图片文字仍为0/2的已知质量短板，先保留真实评估结果，在最终RAG验收时决定是否增加专用视觉/OCR增强 |
+| 当前步骤 | M2-15.6已完成：10文档Fake整链、失败重试、重复幂等、离线BGE单文档Smoke和正式Seed恢复均已验证 |
+| 已完成到 | M1已完成；M2已完成M2-01至M2-15；全量`518 passed, 6 skipped`，Alembic为`20260831_0007 (head)`，正式Seed保持0 Chunk Set/0 Index Set/0 Chunk/0 Embedding |
+| 下一动作 | 停止在M2-15边界；M2-16检索功能必须先提交实施方案并得到用户明确确认，当前不自动开始 |
+| 当前阻塞 | 无技术硬阻塞；V1尚无进程崩溃后的indexing租约自动回收；图文DOCX 0/2不在M2-15修复。全仓Ruff格式门已通过，两个冻结Seed生成器由`ruff.toml`保护原始哈希 |
 
 ## 2. 里程碑总览
 
@@ -22,7 +22,7 @@
 |---|---|---|---|
 | M0 | 产品、技术、数据、评估与协作基线 | 已完成 | [查看M0详细记录](progress/M0_DESIGN.md) |
 | M1 | 库存查询垂直切片 | 已完成 | [查看M1详细记录](progress/M1_INVENTORY_QUERY.md)；M1-01至M1-21全部完成并验证 |
-| M2 | 自建RAG垂直切片 | 进行中 | [查看M2方案与实施记录](progress/M2_KNOWLEDGE_RAG.md) |
+| M2 | 自建RAG垂直切片 | 进行中 | [查看M2方案与实施记录](progress/M2_KNOWLEDGE_RAG.md)；M2-15已完成 |
 | M3 | 多模态商品分析 | 待开始 | 等待M2完成 |
 | M4 | 深度研究与报告 | 待开始 | 等待M3完成 |
 | M5 | 评估、加固与作品化 | 待开始 | 等待M4完成 |
@@ -33,7 +33,7 @@
 |---|---|---|
 | M0 | [M0_DESIGN.md](progress/M0_DESIGN.md) | 总体方案、协作基线和进度结构 |
 | M1 | [M1_INVENTORY_QUERY.md](progress/M1_INVENTORY_QUERY.md) | 现状、边界、21个实施步骤、验证矩阵和待确认决定 |
-| M2 | [M2_KNOWLEDGE_RAG.md](progress/M2_KNOWLEDGE_RAG.md) | 只读盘点、已确认方案、26个正式步骤（M2-11细分5个子步骤）和后续验证日志 |
+| M2 | [M2_KNOWLEDGE_RAG.md](progress/M2_KNOWLEDGE_RAG.md) | M2-01至M2-15方案、逐步验证日志、完成证据与风险边界 |
 | M3 | 尚未创建 | 进入M3方案讨论时创建 |
 | M4 | 尚未创建 | 进入M4方案讨论时创建 |
 | M5 | 尚未创建 | 进入M5方案讨论时创建 |
@@ -70,6 +70,11 @@
 | M2解析路由 | 所有文件先过扩展名/文件签名与Native安全限制；再自动检查低文字、双栏、PDF表格、DOCX媒体和XLSX合并单元格，普通文件选Native，复杂PDF选Docling，复杂DOCX/XLSX走Hybrid并继续以Native作为Office事实底稿；CSV不进入Docling |
 | M2解析发布 | `DocumentParserService`使用短事务原子领取版本，在事务外解析，按`{tenant}/parsed/{year}/{month}/{version_id}.json`不可覆盖发布`m2-routed-parsed-document-v1`；成功写ready，失败删半成品并写failed，同版本可安全重试 |
 | M2分块合同 | M2-12只消费选中Canonical Artifact；`m2-canonical-chunk-artifact-v1`保留文本、表格、公式、单元格和来源Span，固定`m2-unicode-token-counter-v1`和600/700/100初始预算，由版本/Artifact/Chunker/Counter/配置推导确定性Chunk Set ID并计算配置、单Chunk和输出Hash |
+| M2表格分块 | DOCX表格、PDF/Docling `document_table`、XLSX Sheet和CSV统一生成结构化Table Chunk；表头与1行数据重叠显式标记上下文，超宽行按不切断合并跨度的列窗口拆分，单个不可容纳单元格安全失败；文本/表格按Canonical Block顺序合并 |
+| M2 Chunk Set元数据 | `document_chunk_sets`以确定性UUID登记文档版本、Canonical输入Hash、Chunker/Counter/配置、执行状态、Artifact Hash/Storage Key与统计；复合外键防跨租户/跨文档错挂，PostgreSQL约束拒绝ready/failed半成品 |
+| M2 Chunk发布 | `DocumentChunkService`有界验真解析JSON、原子领取确定性Chunk Set、事务外切块并按`{tenant}/chunks/{year}/{month}/{chunk_set_id}.json`不可覆盖发布；失败清理半成品并可用同一ID重试，只复用字节完全相同的孤儿对象 |
+| M2 Chunk检索存储 | `document_chunks`一行对应一个Canonical Chunk；普通列与双重复合外键固定tenant/document/version/Chunk Set关系，JSONB保存M2-12定位和表格结构，独立`fts_text`生成`simple` FTS并使用GIN，Embedding保持可空`vector(1024)`并预建余弦HNSW，真实向量生成留到M2-14 |
+| M2索引代次与active指针 | 新增确定性`document_index_sets`保存Chunk Set、完整Embedding身份、FTS版本、状态、attempt和统计；Version active指针通过tenant/document/version/status复合外键只能指向自己的ready Index Set，Chunk唯一边界按Index Set隔离 |
 
 ## 5. 当前阻塞与跨阶段问题
 
@@ -125,3 +130,16 @@
 - 2026-08-30：完成M2-11.5并收口M2-11；新增`DocumentParserService`、原子`claim/complete/fail`状态更新、`m2-routed-parsed-document-v1`版本化JSON发布、安全结果Schema和固定解析错误。真实PostgreSQL/LocalStorage验证成功发布、源文件失败后重试、数据库完成提交失败后的Artifact删除、非所有者拒绝和失败新版本不替换旧active版本；公开结果不含Storage Key，JSON保存两路Parser版本、路由原因、警告、对照和Hash。聚焦152项通过、2项按条件跳过，全量375项通过、5项按条件跳过，Ruff、7个核心文件Mypy、依赖和公共导入通过；迁移仍为`20260829_0004 (head)`，正式Seed已恢复为M1可售125及10文件/10文档/10个pending版本；等待单独确认M2-12。
 - 2026-08-30：用户确认M2-12方案后完成M2-12.1；新增`m2-canonical-chunk-artifact-v1`严格合同、文本/表格Chunk、来源Span、表格公式/单元格语义、确定性UUIDv5 Chunk Set ID、配置/单Chunk/整体Hash和`m2-unicode-token-counter-v1`，补齐600目标/700硬上限/100重叠等集中配置。聚焦`52 passed`，有效全量`387 passed, 5 skipped`，Ruff全范围、核心Mypy、编译、依赖和Alembic check通过；迁移仍为`20260829_0004 (head)`，Seed恢复为M1可售125及M2 10文件/10文档/10个pending版本/9 ACL；本步未实现真正切块算法、迁移、Storage发布、Embedding或检索，等待单独确认M2-12.2。
 - 2026-08-30：完成M2-12.2；新增Parser无关的确定性文本规范化和PDF/DOCX结构感知Chunker，保留Canonical字符偏移、标题路径、页码、跨页Span和显式列表标记，按段落/句子/分句/空白/Token硬边界递归兜底，重复页眉页脚进入排除审计，表格形成硬边界并返回待处理Block ID。聚焦`103 passed`、全量`396 passed, 5 skipped`，Ruff全范围、5个Chunk核心文件Mypy、编译、依赖、Alembic check和真实Native PDF/DOCX链路通过；迁移仍为`20260829_0004 (head)`，Seed恢复为M1可售125及M2 10文件/10文档/10个pending版本/9 ACL；等待单独确认M2-12.3表格切块。
+- 2026-08-31：完成M2-12.3；新增四类Canonical结构化表格Chunker和文档级顺序合并，表头及默认1行数据重叠显式标记上下文，保留DOCX/PDF标题路径与页码/Bounding Box、XLSX Sheet/范围/公式/缓存、CSV编码/行范围和合并跨度；超宽行按完整单元格列窗口拆分，不可容纳单元格安全失败。聚焦`133 passed`、全量`408 passed, 3 skipped`，Ruff全范围、核心Mypy、编译、依赖、Alembic check通过；迁移仍为`20260829_0004 (head)`，pgvector 0.8.6与PostgreSQL healthy，Seed恢复为M1可售125及M2 10文件/10文档/10个pending版本/9 ACL；等待单独确认M2-12.4。
+- 2026-08-31：完成M2-12.4；新增`document_chunk_sets` SQLAlchemy模型和`20260831_0005`迁移，以复合外键、确定性ID、完整配置/Hash、四态生命周期、受限Storage Key和一致统计登记重切元数据，PostgreSQL硬约束拒绝跨文档错挂及ready/failed半成品。聚焦`85 passed`、全量`413 passed, 3 skipped`，Ruff全范围、整个app Mypy、编译、依赖、迁移往返和Alembic check通过；Seed恢复为M1可售125及M2 10文件/10文档/10个pending版本/9 ACL，新表保持0行；等待单独确认M2-12.5。
+- 2026-08-31：完成M2-12.5；新增`DocumentChunkService`、Chunk Set原子领取/完成/失败Repository SQL、安全发布Schema/错误和最终Artifact跳过表格审计，真实跑通Parser→Canonical→文本/表格Chunk→不可覆盖Storage JSON→PostgreSQL ready链路，并验证失败同ID重试、数据库失败补偿、相同孤儿复用、二次领取拒绝、权限/状态/篡改与配置重切。聚焦扩大集合`135 passed`、Service单独`7 passed`，全量`421 passed, 3 skipped`，Ruff、95文件Mypy、编译、依赖和Alembic check通过；迁移保持`0005 head`，Seed恢复为M1可售125及M2 10/10/10/9和10个pending版本，正式Chunk Set/JSON保持0；等待单独确认M2-12.6。
+- 2026-08-31：完成M2-12.6并收口M2-12；新增可重复的真实Golden发布/验收/恢复脚本及3项日常测试，并修复CSV尾部空单元格文本在合同校验前后Hash不一致的问题。10份`m2-v1`/`m2-complex-v1`文件经真实Parser Service→Chunk Service→Storage/PostgreSQL发布35个Chunk（27文本/8表格，最大394 Token），18/20内容与定位同时命中，唯一失败仍是已知图文DOCX 0/2；10/10逐字节确定性重建和Canonical顺序通过。全量`424 passed, 3 skipped`，Ruff、95文件Mypy、编译、依赖和Alembic check通过；20个临时JSON已精确删除，Seed恢复为M1可售125及M2 10/10/10/9、10个pending版本、0 Chunk Set/发布JSON；停止并等待M2-13授权。
+- 2026-08-31：完成M2-13；新增`document_chunks` ORM与`20260831_0006`迁移，一行保存一个文本/表格Chunk及完整定位JSONB，复合外键和唯一/格式/结构约束拒绝跨租户、跨文档、跨版本、错Chunk Set和重复/脏行；独立`fts_text`生成PostgreSQL `simple` FTS并建立GIN索引，可空`vector(1024)`建立余弦HNSW索引，Embedding模型/版本只允许与真实向量同时出现。迁移往返、固定关键词、固定向量排序和级联删除通过真实PostgreSQL；全量`429 passed, 3 skipped`，Ruff、95文件Mypy、编译、依赖和Alembic check通过；正式Seed恢复为M1可售125及M2 10/10/10/9、10个pending版本、0 Chunk Set/Chunk/发布JSON；停止并等待M2-14授权。
+- 2026-08-31：完成M2-14；新增硬件无关`EmbeddingProvider`合同、确定性Fake和本地BGE-M3 Provider，冻结document/query用途、1024维有限归一化校验、cache key、并发首次加载、OOM batch降级、本地快照与强制离线边界；固定`BAAI/bge-m3@5617a9f61b028005a4858fdac845db406aefb181`，真实CPU Smoke/匿名基准和离线复跑通过。全量`476 passed, 5 skipped`，Ruff、100个源码文件Mypy、编译、依赖和Alembic检查通过；正式Seed保持0 Chunk/0 Embedding，未实现索引或检索。
+- 2026-08-31：完成M2-15开始前只读盘点并提交待确认方案；核对`main`与HEAD `960559a13281555f2b3d52d27e9e4fc7552fcc05`、保留M2-12/13/14未提交改动，确认PostgreSQL/pgvector、`0006 head`、10/10/10/9、10个parse/index pending、M1可售125及Storage 10 uploads/0 parsed/0 chunks。推荐新增确定性Index Set，分6个小步骤实现幂等领取、失败重试、Chunk逐行保存和版本/索引原子激活；本轮只修改进度文档，没有编码、迁移、模型下载或数据库写入。
+- 2026-08-31：用户确认M2-15方案后完成M2-15.1；新增`document_index_sets` ORM与`20260831_0007`迁移，Version active指针通过tenant/document/version/status复合外键只能指向自己的ready索引代次，Chunk新增Index Set归属和cache key并按代次判重；真实验证跨边界、状态形状、同Chunk Set多Embedding代次、active-ready、级联及`0006→0007→0006→0007`。聚焦`70 passed`、全量`485 passed, 5 skipped`，Ruff检查、100文件Mypy、编译、依赖、Alembic check和本步文件格式检查通过；正式Seed恢复为10/10/10/9、10个pending版本、0 Chunk Set/Index Set/Chunk/Embedding、M1可售125及Storage 10 uploads；停止等待M2-15.2。
+- 2026-08-31：完成M2-15.2；新增确定性Index Set身份与Chunk行Mapper，完整Hash覆盖Provider/model/revision/pooling/max length/normalize/precision/1024维，使用`retrieval_text`复算cache key并以strict zip配对文本、表格JSON、向量、raw FTS和审计字段，拒绝数量/顺序/用途/身份/Hash/向量/跨边界篡改。新测试`6 passed`、聚焦`120 passed`、全量`491 passed, 5 skipped`，Ruff、本步格式、111文件Mypy、编译、依赖和Alembic检查通过；正式Seed恢复为10/10/10/9、10个pending版本、0 Chunk Set/Index Set/Chunk/Embedding、M1关键可售125及Storage 10 uploads；本步无SQL、API、模型下载或检索，停止等待M2-15.3。
+- 2026-08-31：完成M2-15.3；新增`DocumentIndexRepository`，以Version/Document/File/Chunk Set行锁、确定性upsert和attempt编号实现单领取、failed重试、过期执行者拒绝、ready复用，并在同一短事务批量保存Chunk、核对统计、标记Index Set ready及切换Version/Document双active指针。真实唯一约束故障证明新候选0 Chunk且旧active/旧Chunk完整保留；同Version重建、新Version切换、Document/File软删除和跨tenant/document拒绝通过。Repository`8 passed`、聚焦`42 passed`、全量`499 passed, 5 skipped`，Ruff、本步格式、113文件Mypy、编译、依赖及Alembic检查通过；无需迁移，正式Seed恢复为0 Index Set/Chunk/Embedding和Storage 10 uploads；停止等待M2-15.4。
+- 2026-08-31：完成M2-15.4；新增`DocumentIndexService`，复用M2-11/12 ready Artifact并串起claim→分批Embedding→Mapper→原子保存，解析/切块/模型/数据库失败均安全登记，同ID重试attempt递增；重复ready跳过Provider且复核实际Chunk统计，129段按128+1保持顺序，同Version新Embedding和新Version均在成品ready后才切active。新增11项测试，聚焦`65 passed`、全量`510 passed, 5 skipped`，Ruff、102文件Mypy、编译、依赖及Alembic检查通过；无需迁移，正式Seed恢复为10/10/10/9、10个pending版本、0 Chunk Set/Index Set/Chunk/Embedding及Storage 10 uploads；停止等待M2-15.5。
+- 2026-08-31：完成M2-15.5；新增三条受认证Documents API，接通创建文档、追加版本和显式同步索引，严格响应不暴露tenant/Storage/path/vector；真实FastAPI/PostgreSQL验证首次与重复索引、Chunk不增行、V1在V2 ready前保持active、company_owner完成后原子切V2、ACL读者/跨边界安全404、409/422/500及Provider恢复后同URL重试。OpenAPI精确只有三条Documents写入路径且无检索功能；新增5项测试，全量`515 passed, 5 skipped`，Ruff、101文件Mypy、编译、依赖及Alembic检查通过；无需迁移，正式Seed恢复为10/10/10/9、10个pending版本、0 Chunk Set/Index Set/Chunk/Embedding及Storage 10 uploads；停止等待M2-15.6。
+- 2026-08-31：完成M2-15.6并收口M2-15；新增可重复的10文档Fake索引验收脚本、验收判定测试、显式离线BGE-M3单文档Smoke和M2-15边界哨兵。正式整链得到10 ready、35 Chunk（27文本/8表格）、35 Embedding/FTS，首次故障第2次重试成功，重复10次全部复用且Provider调用和Chunk数不增长；真实BGE固定模型/revision索引与清理通过。全量`518 passed, 6 skipped`，Ruff lint/194文件格式、104文件Mypy、编译、依赖、Alembic和Docker健康检查通过；恢复后正式Seed为10/10/10/9、10个parse/index pending、0 active/Chunk Set/Index Set/Chunk/Embedding，Storage 10 uploads、0 parsed/chunks JSON，M1指定库存125。未实现任何M2-16检索功能，停止等待下一阶段方案确认。

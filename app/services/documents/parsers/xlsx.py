@@ -32,9 +32,7 @@ if TYPE_CHECKING:
 PARSER_NAME: Literal["openpyxl"] = "openpyxl"
 PARSER_VERSION = f"m2-xlsx-v1+openpyxl-{openpyxl.__version__}"
 _READ_CHUNK_BYTES = 1024 * 1024
-_REQUIRED_MEMBERS = frozenset(
-    {"[Content_Types].xml", "_rels/.rels", "xl/workbook.xml"}
-)
+_REQUIRED_MEMBERS = frozenset({"[Content_Types].xml", "_rels/.rels", "xl/workbook.xml"})
 
 SpreadsheetScalar: TypeAlias = str | int | float | bool | None
 CellDataType: TypeAlias = Literal[
@@ -122,9 +120,7 @@ class XlsxSheet(M1Schema):
     def validate_shape_and_locator(self) -> XlsxSheet:
         if self.row_count != len(self.rows):
             raise ValueError("XLSX row_count does not match rows")
-        if [row.row_number for row in self.rows] != list(
-            range(1, self.row_count + 1)
-        ):
+        if [row.row_number for row in self.rows] != list(range(1, self.row_count + 1)):
             raise ValueError("XLSX rows must be a complete one-based sequence")
         if any(len(row.cells) != self.column_count for row in self.rows):
             raise ValueError("XLSX rows must match column_count")
@@ -455,9 +451,7 @@ class XlsxParser:
             ):
                 coordinate = f"{get_column_letter(column_number)}{row_number}"
                 formula = (
-                    str(formula_cell.value)
-                    if formula_cell.data_type == "f"
-                    else None
+                    str(formula_cell.value) if formula_cell.data_type == "f" else None
                 )
                 cached_value = (
                     _normalize_scalar(value_cell.value) if formula is not None else None

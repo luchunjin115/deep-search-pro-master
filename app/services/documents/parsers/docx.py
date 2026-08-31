@@ -110,9 +110,7 @@ class DocxTableBlock(M1Schema):
             or self.locator.heading_path != self.heading_path
         ):
             raise ValueError("table locator does not match block")
-        if [row.row_number for row in self.rows] != list(
-            range(1, len(self.rows) + 1)
-        ):
+        if [row.row_number for row in self.rows] != list(range(1, len(self.rows) + 1)):
             raise ValueError("rows must be a complete one-based sequence")
         for row in self.rows:
             for cell in row.cells:
@@ -178,9 +176,7 @@ class DocxParseResult(M1Schema):
             _character_count(block.text)
             if isinstance(block, DocxParagraphBlock)
             else sum(
-                _character_count(cell.text)
-                for row in block.rows
-                for cell in row.cells
+                _character_count(cell.text) for row in block.rows for cell in row.cells
             )
             for block in self.blocks
         )

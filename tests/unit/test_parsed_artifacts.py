@@ -211,9 +211,10 @@ def test_both_formal_m2_corpora_convert_without_changing_source_hashes() -> None
         artifacts.append(artifact)
         assert artifact.source_sha256 == hashlib.sha256(source.content).hexdigest()
         assert artifact.source_type == source_format
-        assert CanonicalParsedArtifact.model_validate_json(
-            artifact.model_dump_json()
-        ) == artifact
+        assert (
+            CanonicalParsedArtifact.model_validate_json(artifact.model_dump_json())
+            == artifact
+        )
 
     assert len({artifact.content_sha256 for artifact in artifacts}) == 10
     assert sum(artifact.statistics.formula_count for artifact in artifacts) == 9

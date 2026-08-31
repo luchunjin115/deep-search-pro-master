@@ -70,9 +70,7 @@ class CsvParseResult(M1Schema):
     def validate_shape_and_counts(self) -> CsvParseResult:
         if self.row_count != len(self.rows):
             raise ValueError("CSV row_count does not match rows")
-        if [row.row_number for row in self.rows] != list(
-            range(1, self.row_count + 1)
-        ):
+        if [row.row_number for row in self.rows] != list(range(1, self.row_count + 1)):
             raise ValueError("CSV rows must be a complete one-based sequence")
         if any(len(row.values) != self.column_count for row in self.rows):
             raise ValueError("CSV rows must match column_count")
@@ -168,12 +166,12 @@ class CsvParser:
 
         rows: list[CsvRow] = []
         character_count = 0
-        for row_number, values in enumerate(frame.itertuples(index=False, name=None), 1):
+        for row_number, values in enumerate(
+            frame.itertuples(index=False, name=None), 1
+        ):
             normalized = [_normalize_csv_value(value) for value in values]
             character_count += sum(
-                not character.isspace()
-                for value in normalized
-                for character in value
+                not character.isspace() for value in normalized for character in value
             )
             if character_count > self._max_extracted_characters:
                 raise DocumentLimitError
@@ -206,7 +204,9 @@ class CsvParser:
             row_count=row_count,
             column_count=column_count,
             non_empty_row_count=sum(not row.is_empty for row in rows),
-            header_row_number=(header_row.row_number if header_row is not None else None),
+            header_row_number=(
+                header_row.row_number if header_row is not None else None
+            ),
             headers=(header_row.values if header_row is not None else []),
             character_count=character_count,
             rows=rows,

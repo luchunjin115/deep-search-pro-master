@@ -15,12 +15,8 @@ ARTIFACT_SCHEMA_VERSION: Literal["m2-canonical-parsed-artifact-v1"] = (
     "m2-canonical-parsed-artifact-v1"
 )
 NATIVE_ADAPTER_VERSION: Literal["m2-native-adapter-v1"] = "m2-native-adapter-v1"
-DOCLING_ADAPTER_VERSION: Literal["m2-docling-adapter-v1"] = (
-    "m2-docling-adapter-v1"
-)
-CONTENT_HASH_VERSION: Literal["m2-canonical-content-v1"] = (
-    "m2-canonical-content-v1"
-)
+DOCLING_ADAPTER_VERSION: Literal["m2-docling-adapter-v1"] = "m2-docling-adapter-v1"
+CONTENT_HASH_VERSION: Literal["m2-canonical-content-v1"] = "m2-canonical-content-v1"
 
 ArtifactSourceType = Literal["pdf", "docx", "xlsx", "csv"]
 ArtifactScalar: TypeAlias = str | int | float | bool | None
@@ -202,7 +198,9 @@ class ArtifactTableBlock(M1Schema):
     def validate_source_contract(self) -> ArtifactTableBlock:
         if [row.row_number for row in self.rows] != list(range(1, len(self.rows) + 1)):
             raise ValueError("artifact rows must be a complete one-based sequence")
-        if self.header_row_number is not None and self.header_row_number > len(self.rows):
+        if self.header_row_number is not None and self.header_row_number > len(
+            self.rows
+        ):
             raise ValueError("artifact header row must exist")
         if self.source_kind == "worksheet":
             if (
@@ -260,9 +258,7 @@ class ArtifactStatistics(M1Schema):
 class CanonicalParsedArtifact(M1Schema):
     """Stable project-owned document facts, independent of parser libraries."""
 
-    schema_version: Literal["m2-canonical-parsed-artifact-v1"] = (
-        ARTIFACT_SCHEMA_VERSION
-    )
+    schema_version: Literal["m2-canonical-parsed-artifact-v1"] = ARTIFACT_SCHEMA_VERSION
     content_hash_version: Literal["m2-canonical-content-v1"] = CONTENT_HASH_VERSION
     source_type: ArtifactSourceType
     source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -293,7 +289,9 @@ class CanonicalParsedArtifact(M1Schema):
             "row_count": len(rows),
             "cell_count": len(cells),
             "formula_count": sum(cell.formula is not None for cell in cells),
-            "character_count": sum(_text_character_count(block.text) for block in text_blocks)
+            "character_count": sum(
+                _text_character_count(block.text) for block in text_blocks
+            )
             + sum(_cell_character_count(cell) for cell in cells),
             "page_count": self.statistics.page_count,
             "sheet_count": (
@@ -435,9 +433,7 @@ def _table_to_markdown(block: ArtifactTableBlock) -> str:
         for row in block.rows
     ]
     header_index = (
-        block.header_row_number - 1
-        if block.header_row_number is not None
-        else 0
+        block.header_row_number - 1 if block.header_row_number is not None else 0
     )
     header = rows[header_index]
     body = [row for index, row in enumerate(rows) if index != header_index]

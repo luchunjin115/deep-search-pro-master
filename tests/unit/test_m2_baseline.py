@@ -50,6 +50,9 @@ M2_ENVIRONMENT_VARIABLES = (
     "EMBEDDING_DIMENSIONS",
     "EMBEDDING_NORMALIZE",
     "EMBEDDING_BATCH_SIZE",
+    "EMBEDDING_POOLING",
+    "EMBEDDING_MAX_LENGTH",
+    "EMBEDDING_PRECISION",
     "RERANKER_BACKEND",
     "RERANKER_MODEL",
     "RERANKER_REVISION",
@@ -69,6 +72,15 @@ M2_ENVIRONMENT_VARIABLES = (
 )
 
 
+def settings_without_env(**overrides: object) -> Settings:
+    """Keep Pydantic Settings' runtime-only _env_file hook in one typed boundary."""
+
+    return Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        **overrides,  # type: ignore[arg-type]
+    )
+
+
 @pytest.fixture(autouse=True)
 def clear_m2_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prevent local shell configuration from changing M2 contract tests."""
@@ -78,7 +90,7 @@ def clear_m2_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_m2_settings_use_safe_local_defaults() -> None:
-    settings = Settings(_env_file=None)
+    settings = settings_without_env()
 
     assert settings.storage_backend == "local"
     assert settings.local_storage_root == Path("data/storage")
@@ -123,6 +135,9 @@ def test_m2_settings_use_safe_local_defaults() -> None:
     assert settings.embedding_model == "BAAI/bge-m3"
     assert settings.embedding_dimensions == 1024
     assert settings.embedding_normalize is True
+    assert settings.embedding_pooling == "cls"
+    assert settings.embedding_max_length == 8192
+    assert settings.embedding_precision == "float32"
     assert settings.reranker_backend == "fake"
     assert settings.reranker_model == "BAAI/bge-reranker-v2-m3"
     assert settings.model_device == "cpu"
@@ -144,7 +159,7 @@ def test_m2_settings_use_safe_local_defaults() -> None:
 
 
 def test_env_example_contains_a_valid_m2_configuration() -> None:
-    settings = Settings(_env_file=".env.example")
+    settings = Settings(_env_file=".env.example")  # type: ignore[call-arg]
 
     assert settings.upload_allowed_extensions == (
         ".pdf",
@@ -248,14 +263,13 @@ def test_m2_settings_reject_inconsistent_values(
     message: str,
 ) -> None:
     with pytest.raises(ValidationError, match=message):
-        Settings(_env_file=None, **overrides)  # type: ignore[arg-type]
+        settings_without_env(**overrides)
 
 
 def test_secret_values_are_masked_in_serialized_settings() -> None:
     qwen_secret = "m2-test-qwen-secret-value"
     jwt_secret = "m2-test-jwt-secret-value"
-    settings = Settings(
-        _env_file=None,
+    settings = settings_without_env(
         llm_provider="qwen",
         qwen_api_key=qwen_secret,
         jwt_secret_key=jwt_secret,
@@ -321,7 +335,7 @@ def test_new_app_ast_does_not_import_legacy_file_or_ragflow_runtime() -> None:
         assert imported_roots.isdisjoint(forbidden_roots), source_file
 
 
-def test_m2_12_2_stops_after_pdf_docx_text_chunking() -> None:
+def test_m2_15_stops_after_index_pipeline_without_retrieval() -> None:
     project_root = Path(__file__).parents[2]
 
     assert (project_root / "app/services/storage").is_dir()
@@ -347,10 +361,42 @@ def test_m2_12_2_stops_after_pdf_docx_text_chunking() -> None:
     assert (chunking / "token_counting.py").is_file()
     assert (chunking / "normalization.py").is_file()
     assert (chunking / "chunker.py").is_file()
-    assert not (chunking / "tables.py").exists()
-    assert not (chunking / "service.py").exists()
+    assert (chunking / "tables.py").is_file()
+    assert (chunking / "service.py").is_file()
+    knowledge_model = (project_root / "app/models/knowledge.py").read_text(
+        encoding="utf-8"
+    )
+    assert "class DocumentChunkSet" in knowledge_model
+    assert "class DocumentIndexSet" in knowledge_model
+    assert "class DocumentChunk" in knowledge_model
+    assert (
+        project_root / "migrations/versions/20260831_0005_document_chunk_sets.py"
+    ).is_file()
+    assert (
+        project_root / "migrations/versions/20260831_0006_document_chunks_fts_vector.py"
+    ).is_file()
+    assert (
+        project_root / "migrations/versions/20260831_0007_document_index_sets.py"
+    ).is_file()
     assert (project_root / "scripts/seed_m2_files.py").is_file()
     assert (project_root / "scripts/m2_seed_content.py").is_file()
+    assert (project_root / "scripts/verify_m2_chunk_pipeline.py").is_file()
     assert (project_root / "data/seed/m2_seed.json").is_file()
-    assert not (project_root / "app/services/retrieval").exists()
+    assert (project_root / "app/services/retrieval/embedding.py").is_file()
+    assert not (project_root / "app/services/indexing").exists()
     assert (project_root / "app/api/routers/files.py").is_file()
+    indexing = project_root / "app/services/documents/indexing"
+    assert (indexing / "contracts.py").is_file()
+    assert (indexing / "mapping.py").is_file()
+    assert (indexing / "service.py").is_file()
+    assert (project_root / "app/api/routers/documents.py").is_file()
+    assert (project_root / "scripts/verify_m2_index_pipeline.py").is_file()
+    assert (project_root / "tests/smoke/test_document_index_bge_smoke.py").is_file()
+
+    retrieval = project_root / "app/services/retrieval"
+    assert not (retrieval / "keyword.py").exists()
+    assert not (retrieval / "dense.py").exists()
+    assert not (retrieval / "hybrid.py").exists()
+    assert not (retrieval / "reranker.py").exists()
+    assert not (project_root / "app/api/routers/retrieval.py").exists()
+    assert not (project_root / "app/api/routers/search.py").exists()

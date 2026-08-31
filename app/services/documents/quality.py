@@ -156,8 +156,7 @@ def _inspect_docx(content: bytes) -> tuple[str, ...]:
         furniture = [
             name
             for name in names
-            if name.startswith(("word/header", "word/footer"))
-            and name.endswith(".xml")
+            if name.startswith(("word/header", "word/footer")) and name.endswith(".xml")
         ]
         if any(b"<w:t" in archive.read(name) for name in furniture):
             tags.add("detected_header_footer")

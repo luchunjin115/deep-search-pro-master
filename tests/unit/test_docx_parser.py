@@ -100,9 +100,10 @@ def test_structured_fixture_has_explicit_page_style_and_table_geometry() -> None
         assert table_width.get(qn("w:w")) == "9360"
         assert table_indent is not None
         assert table_indent.get(qn("w:w")) == "120"
-        assert [
-            column.get(qn("w:w")) for column in table._tbl.tblGrid.gridCol_lst
-        ] == ["2700", "6660"]
+        assert [column.get(qn("w:w")) for column in table._tbl.tblGrid.gridCol_lst] == [
+            "2700",
+            "6660",
+        ]
         for row in table.rows:
             assert [
                 cell._tc.get_or_add_tcPr().get_or_add_tcW().get(qn("w:w"))

@@ -6,7 +6,13 @@ from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.api.errors import register_error_handlers
-from app.api.routers import auth_router, evidence_router, files_router, threads_router
+from app.api.routers import (
+    auth_router,
+    documents_router,
+    evidence_router,
+    files_router,
+    threads_router,
+)
 from app.core.config import Settings, get_settings
 from app.db.session import (
     DatabaseConnectionError,
@@ -34,6 +40,7 @@ def create_app(
         current_settings
     )
     application.state.storage_backend = storage_backend
+    application.state.embedding_provider = None
     application.add_middleware(
         CORSMiddleware,
         allow_origins=current_settings.cors_origins,
@@ -46,6 +53,7 @@ def create_app(
     application.include_router(threads_router, prefix=current_settings.api_v1_prefix)
     application.include_router(evidence_router, prefix=current_settings.api_v1_prefix)
     application.include_router(files_router, prefix=current_settings.api_v1_prefix)
+    application.include_router(documents_router, prefix=current_settings.api_v1_prefix)
 
     @application.get("/health", tags=["system"])
     def health() -> JSONResponse:

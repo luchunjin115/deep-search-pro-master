@@ -11,6 +11,7 @@ from app.services.documents.chunking.contracts import (
     ChunkingConfig,
     ChunkInputProvenance,
     DocumentChunk,
+    SkippedTableBlock,
     build_chunk_artifact,
     build_document_chunk,
 )
@@ -18,6 +19,13 @@ from app.services.documents.chunking.normalization import (
     NormalizedSourceText,
     SourceCharacter,
     normalize_source_text,
+)
+from app.services.documents.chunking.service import DocumentChunkService
+from app.services.documents.chunking.tables import (
+    DocumentChunkingResult,
+    StructureAwareDocumentChunker,
+    StructureAwareTableChunker,
+    TableChunkingResult,
 )
 from app.services.documents.chunking.token_counting import (
     TokenCounter,
@@ -31,10 +39,16 @@ __all__ = [
     "ChunkerIdentity",
     "ChunkingConfig",
     "DocumentChunk",
+    "DocumentChunkService",
     "DocumentChunkingError",
+    "DocumentChunkingResult",
     "NormalizedSourceText",
+    "SkippedTableBlock",
     "SourceCharacter",
+    "StructureAwareDocumentChunker",
+    "StructureAwareTableChunker",
     "StructureAwareTextChunker",
+    "TableChunkingResult",
     "TextChunkingResult",
     "TokenCounter",
     "TokenSpan",

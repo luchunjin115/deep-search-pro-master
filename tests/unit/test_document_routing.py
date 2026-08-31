@@ -163,7 +163,9 @@ def test_ordinary_m2_corpus_stays_native_without_calling_docling() -> None:
 
     assert results
     assert all(result.route == "native" for result in results)
-    assert all(result.selected_artifact.parser.provider == "native" for result in results)
+    assert all(
+        result.selected_artifact.parser.provider == "native" for result in results
+    )
     assert provider.calls == []
 
 
@@ -187,18 +189,22 @@ def test_complex_corpus_enters_docling_and_office_keeps_native_facts() -> None:
         "hybrid",
     ]
     assert all(result.docling_artifact is not None for result in results.values())
-    assert "detected_two_column" in results[
-        "two_column_market_brief"
-    ].quality.complexity_tags
-    assert "detected_document_table" in results[
-        "merged_header_cost_table"
-    ].quality.complexity_tags
-    assert "detected_embedded_media" in results[
-        "visual_quality_notice"
-    ].quality.complexity_tags
-    assert "detected_merged_cells" in results[
-        "multi_region_replenishment"
-    ].quality.complexity_tags
+    assert (
+        "detected_two_column"
+        in results["two_column_market_brief"].quality.complexity_tags
+    )
+    assert (
+        "detected_document_table"
+        in results["merged_header_cost_table"].quality.complexity_tags
+    )
+    assert (
+        "detected_embedded_media"
+        in results["visual_quality_notice"].quality.complexity_tags
+    )
+    assert (
+        "detected_merged_cells"
+        in results["multi_region_replenishment"].quality.complexity_tags
+    )
     workbook = results["multi_region_replenishment"]
     assert workbook.selected_artifact == workbook.native_artifact
     assert workbook.selected_artifact.statistics.formula_count == 6

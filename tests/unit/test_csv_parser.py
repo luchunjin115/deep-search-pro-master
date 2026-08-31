@@ -95,9 +95,12 @@ def test_csv_stream_failures_settings_and_constructor_limits_are_safe() -> None:
     assert "private" not in str(stream_error.value).lower()
 
     settings = Settings(_env_file=None, csv_max_rows=100)  # type: ignore[call-arg]
-    assert CsvParser.from_settings(settings).parse(
-        io.BytesIO(make_gb18030_csv())
-    ).row_count == 3
+    assert (
+        CsvParser.from_settings(settings)
+        .parse(io.BytesIO(make_gb18030_csv()))
+        .row_count
+        == 3
+    )
     with pytest.raises(ValueError, match="positive and bounded"):
         CsvParser(max_rows=0)
     with pytest.raises(ValueError, match="positive and bounded"):

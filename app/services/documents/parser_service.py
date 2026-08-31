@@ -158,11 +158,14 @@ class DocumentParserService:
                 version_id=version_id,
             )
             if version is None:
-                if documents.find_version(
-                    tenant_id=user.tenant_id,
-                    document_id=document_id,
-                    version_id=version_id,
-                ) is None:
+                if (
+                    documents.find_version(
+                        tenant_id=user.tenant_id,
+                        document_id=document_id,
+                        version_id=version_id,
+                    )
+                    is None
+                ):
                     raise DocumentNotFoundError
                 raise DocumentStateConflictError
 
@@ -241,10 +244,7 @@ class DocumentParserService:
         now = self._clock()
         if now.tzinfo is None or now.utcoffset() is None:
             raise DocumentParsingError
-        return (
-            f"{claim.tenant_id}/parsed/{now:%Y}/{now:%m}/"
-            f"{claim.version_id}.json"
-        )
+        return f"{claim.tenant_id}/parsed/{now:%Y}/{now:%m}/{claim.version_id}.json"
 
     def _complete(
         self,

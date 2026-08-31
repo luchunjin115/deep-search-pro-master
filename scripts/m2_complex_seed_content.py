@@ -77,7 +77,9 @@ def _build_scanned_pdf(document: dict[str, Any], disclaimer: str) -> bytes:
         body_font = ImageFont.load_default(size=30)
         small_font = ImageFont.load_default(size=20)
         drawing.rectangle((70, 70, 1170, 1684), outline="#222222", width=5)
-        drawing.text((115, 120), page["image_lines"][0], fill="#111111", font=title_font)
+        drawing.text(
+            (115, 120), page["image_lines"][0], fill="#111111", font=title_font
+        )
         y = 280
         for line in page["image_lines"][1:]:
             drawing.text((130, y), line, fill="#111111", font=body_font)
@@ -165,7 +167,9 @@ def _build_complex_table_pdf(document: dict[str, Any], disclaimer: str) -> bytes
 
     canvas.setFillColorRGB(0.12, 0.31, 0.47)
     canvas.rect(x0, y0, widths[0], row_height, fill=1, stroke=0)
-    canvas.rect(x0 + widths[0], y0, total_width - widths[0], row_height, fill=1, stroke=0)
+    canvas.rect(
+        x0 + widths[0], y0, total_width - widths[0], row_height, fill=1, stroke=0
+    )
     canvas.setFillColorRGB(1, 1, 1)
     canvas.setFont("STSong-Light", 10)
     canvas.drawCentredString(x0 + widths[0] / 2, y0 + 11, content["groups"][0]["label"])
@@ -260,7 +264,9 @@ def _build_visual_docx(document: dict[str, Any], disclaimer: str) -> bytes:
 def _make_text_card(lines: list[str]) -> io.BytesIO:
     image = Image.new("RGB", (1200, 520), "#FFF7E8")
     drawing = ImageDraw.Draw(image)
-    drawing.rounded_rectangle((25, 25, 1175, 495), radius=24, outline="#B45309", width=6)
+    drawing.rounded_rectangle(
+        (25, 25, 1175, 495), radius=24, outline="#B45309", width=6
+    )
     title_font = ImageFont.load_default(size=36)
     body_font = ImageFont.load_default(size=30)
     for index, line in enumerate(lines):

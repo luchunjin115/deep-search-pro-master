@@ -54,10 +54,7 @@ class ParserFixture:
 
     @property
     def parsed_key(self) -> str:
-        return (
-            f"{self.tenant_id}/parsed/2026/08/"
-            f"{self.version_id}.json"
-        )
+        return f"{self.tenant_id}/parsed/2026/08/{self.version_id}.json"
 
     def parser(self) -> DocumentParserService:
         return DocumentParserService(
@@ -200,7 +197,9 @@ def test_parse_version_publishes_auditable_json_and_ready_state(
     assert result.parser_provider == "native"
     assert result.parser_name == "pymupdf"
     assert "parsed_storage_key" not in result.model_dump()
-    document, version, file_row = _database_rows(fixture.runtime.session_factory, fixture)
+    document, version, file_row = _database_rows(
+        fixture.runtime.session_factory, fixture
+    )
     assert version.parse_status == "ready"
     assert version.parsed_storage_key == fixture.parsed_key
     assert version.parser_name == result.parser_name
@@ -212,9 +211,10 @@ def test_parse_version_publishes_auditable_json_and_ready_state(
         payload = stream.read()
     published = RoutedParseResult.model_validate_json(payload)
     assert published.schema_version == "m2-routed-parsed-document-v1"
-    assert published.selected_artifact.source_sha256 == hashlib.sha256(
-        fixture.source
-    ).hexdigest()
+    assert (
+        published.selected_artifact.source_sha256
+        == hashlib.sha256(fixture.source).hexdigest()
+    )
     assert published.selected_artifact.content_sha256 == (
         result.artifact_content_sha256
     )
@@ -277,6 +277,7 @@ def test_database_failure_after_publication_is_compensated_and_retryable(
     fixture = parser_fixture
 
     with monkeypatch.context() as patch:
+
         def fail_complete(*_args: object, **_kwargs: object) -> None:
             raise SQLAlchemyError("D:/private/database detail")
 

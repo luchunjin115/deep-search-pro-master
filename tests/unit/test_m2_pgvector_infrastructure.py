@@ -40,15 +40,15 @@ def test_pgvector_dockerfile_pins_base_source_and_build_dependencies() -> None:
     assert f"postgres:17.11-alpine3.24@{POSTGRES_BASE_DIGEST}" in dockerfile
     assert f"pgvector/pgvector.git#{PGVECTOR_COMMIT}" in dockerfile
     assert "build-base=0.5-r4" in dockerfile
-    assert "make OPTFLAGS=\"\" with_llvm=no" in dockerfile
+    assert 'make OPTFLAGS="" with_llvm=no' in dockerfile
     assert "COPY docker/postgres/init/001-enable-vector.sql" in dockerfile
     assert ":latest" not in dockerfile
 
 
 def test_fresh_database_initialization_only_enables_vector_extension() -> None:
-    init_sql = (
-        PROJECT_ROOT / "docker/postgres/init/001-enable-vector.sql"
-    ).read_text(encoding="utf-8")
+    init_sql = (PROJECT_ROOT / "docker/postgres/init/001-enable-vector.sql").read_text(
+        encoding="utf-8"
+    )
 
     statements = [
         line.strip()

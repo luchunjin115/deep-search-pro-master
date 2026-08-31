@@ -8,6 +8,9 @@ from urllib.parse import urlsplit
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+BGE_M3_MODEL_ID = "BAAI/bge-m3"
+BGE_M3_REVISION = "5617a9f61b028005a4858fdac845db406aefb181"
+
 
 class Settings(BaseSettings):
     """应用运行配置。
@@ -168,6 +171,9 @@ class Settings(BaseSettings):
     embedding_dimensions: int = Field(default=1024, ge=1024, le=1024)
     embedding_normalize: bool = True
     embedding_batch_size: int = Field(default=4, ge=1, le=32)
+    embedding_pooling: Literal["cls"] = "cls"
+    embedding_max_length: int = Field(default=8192, ge=8192, le=8192)
+    embedding_precision: Literal["float32", "float16", "bfloat16"] = "float32"
 
     reranker_backend: Literal["fake", "bge"] = "fake"
     reranker_model: str = Field(
@@ -288,8 +294,15 @@ class Settings(BaseSettings):
             raise ValueError("DOCLING_ENABLE_REMOTE_SERVICES必须为False")
         if self.docling_allow_external_plugins:
             raise ValueError("DOCLING_ALLOW_EXTERNAL_PLUGINS必须为False")
-        if self.embedding_backend == "bge" and self.embedding_revision == "main":
-            raise ValueError("真实Embedding必须配置固定EMBEDDING_REVISION")
+        if self.embedding_backend == "bge" and (
+            self.embedding_model != BGE_M3_MODEL_ID
+            or self.embedding_revision != BGE_M3_REVISION
+        ):
+            raise ValueError(
+                "真实Embedding必须配置固定EMBEDDING_MODEL和EMBEDDING_REVISION"
+            )
+        if self.embedding_backend == "bge" and not self.model_local_files_only:
+            raise ValueError("真实Embedding必须启用本地文件离线模式")
         if self.reranker_backend == "bge" and self.reranker_revision == "main":
             raise ValueError("真实Reranker必须配置固定RERANKER_REVISION")
         if self.upload_stream_chunk_size_bytes > self.upload_max_file_size_bytes:

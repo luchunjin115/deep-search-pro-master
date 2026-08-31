@@ -263,7 +263,9 @@ def build_docling_converter(settings: Settings) -> Any:
     )
 
 
-def docling_text(converter: Any, name: str, content: bytes) -> tuple[str, dict[str, Any]]:
+def docling_text(
+    converter: Any, name: str, content: bytes
+) -> tuple[str, dict[str, Any]]:
     from docling.datamodel.document import DocumentStream
 
     converted = converter.convert(
@@ -343,11 +345,15 @@ def aggregate(documents: list[dict[str, Any]], engine: str) -> dict[str, Any]:
     }
 
 
-def run_benchmark(settings: Settings, only_document: str | None = None) -> dict[str, Any]:
+def run_benchmark(
+    settings: Settings, only_document: str | None = None
+) -> dict[str, Any]:
     """Execute both engines against reviewed, generated in-memory sources."""
 
     if settings.docling_backend != "docling":
-        raise RuntimeError("Set DOCLING_BACKEND=docling for the explicit real benchmark")
+        raise RuntimeError(
+            "Set DOCLING_BACKEND=docling for the explicit real benchmark"
+        )
     if settings.docling_device != "cpu":
         raise RuntimeError("M2-11.2 is fixed to the verified CPU device")
 
@@ -359,11 +365,15 @@ def run_benchmark(settings: Settings, only_document: str | None = None) -> dict[
     data = load_complex_seed_definition()
     sources = generate_complex_sources(data)
     if only_document is not None:
-        sources = [source for source in sources if source.definition["key"] == only_document]
+        sources = [
+            source for source in sources if source.definition["key"] == only_document
+        ]
         if not sources:
             raise RuntimeError(f"Unknown complex document key: {only_document}")
 
-    converter, converter_resources = measure_call(partial(build_docling_converter, settings))
+    converter, converter_resources = measure_call(
+        partial(build_docling_converter, settings)
+    )
     documents: list[dict[str, Any]] = []
     for source in sources:
         key = source.definition["key"]
@@ -396,7 +406,11 @@ def run_benchmark(settings: Settings, only_document: str | None = None) -> dict[
     docling = aggregate(documents, "docling")
     full_corpus = only_document is None
     scanned = next(
-        (item["docling"] for item in documents if item["key"] == "scanned_receiving_ticket"),
+        (
+            item["docling"]
+            for item in documents
+            if item["key"] == "scanned_receiving_ticket"
+        ),
         None,
     )
     qualifies = bool(
@@ -440,7 +454,9 @@ def run_benchmark(settings: Settings, only_document: str | None = None) -> dict[
             "python": platform.python_version(),
             "platform": platform.platform(),
             "logical_cpu_count": psutil.cpu_count(logical=True),
-            "physical_memory_mib": round(psutil.virtual_memory().total / 1024 / 1024, 1),
+            "physical_memory_mib": round(
+                psutil.virtual_memory().total / 1024 / 1024, 1
+            ),
             "packages": {
                 package: package_version(package)
                 for package in ("docling", "rapidocr", "torch", "onnxruntime", "psutil")

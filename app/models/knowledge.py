@@ -5,9 +5,11 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
+    Computed,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -20,6 +22,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -290,6 +293,24 @@ class DocumentVersion(Base):
             name="fk_document_versions_tenant_file",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            [
+                "tenant_id",
+                "active_index_set_id",
+                "id",
+                "document_id",
+                "index_status",
+            ],
+            [
+                "document_index_sets.tenant_id",
+                "document_index_sets.id",
+                "document_index_sets.document_version_id",
+                "document_index_sets.document_id",
+                "document_index_sets.status",
+            ],
+            name="fk_document_versions_active_index_set",
+            use_alter=True,
+        ),
         CheckConstraint("version_no >= 1", name="version_no_positive"),
         CheckConstraint(
             "content_hash ~ '^[0-9a-f]{64}$'",
@@ -327,6 +348,10 @@ class DocumentVersion(Base):
             "index_status <> 'ready' OR parse_status = 'ready'",
             name="ready_index_has_ready_parse",
         ),
+        CheckConstraint(
+            "active_index_set_id IS NULL OR index_status = 'ready'",
+            name="active_index_set_matches_status",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -350,6 +375,7 @@ class DocumentVersion(Base):
         default="pending",
         server_default="pending",
     )
+    active_index_set_id: Mapped[UUID | None] = mapped_column(Uuid)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -359,6 +385,599 @@ class DocumentVersion(Base):
     document: Mapped[Document] = relationship(
         back_populates="versions",
         foreign_keys=[tenant_id, document_id],
+    )
+    chunk_sets: Mapped[list[DocumentChunkSet]] = relationship(
+        back_populates="document_version",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        foreign_keys=lambda: [
+            DocumentChunkSet.tenant_id,
+            DocumentChunkSet.document_version_id,
+            DocumentChunkSet.document_id,
+        ],
+    )
+
+
+class DocumentChunkSet(Base):
+    """One deterministic, retryable Chunk Artifact generation for a version."""
+
+    __tablename__ = "document_chunk_sets"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "id",
+            name="uq_document_chunk_sets_tenant_id",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "id",
+            "document_version_id",
+            "document_id",
+            name="uq_document_chunk_sets_tenant_id_version_document",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "document_version_id", "document_id"],
+            [
+                "document_versions.tenant_id",
+                "document_versions.id",
+                "document_versions.document_id",
+            ],
+            name="fk_document_chunk_sets_tenant_version_document",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_document_chunk_sets_tenant_version_created",
+            "tenant_id",
+            "document_version_id",
+            "created_at",
+        ),
+        Index(
+            "ix_document_chunk_sets_tenant_status",
+            "tenant_id",
+            "status",
+        ),
+        CheckConstraint(
+            "artifact_schema_version = 'm2-canonical-chunk-artifact-v1'",
+            name="artifact_schema_version_allowed",
+        ),
+        CheckConstraint(
+            "content_hash_version = 'm2-chunk-content-v1'",
+            name="content_hash_version_allowed",
+        ),
+        CheckConstraint(
+            "routed_schema_version = 'm2-routed-parsed-document-v1'",
+            name="routed_schema_version_allowed",
+        ),
+        CheckConstraint(
+            "canonical_schema_version = 'm2-canonical-parsed-artifact-v1'",
+            name="canonical_schema_version_allowed",
+        ),
+        CheckConstraint(
+            "source_sha256 ~ '^[0-9a-f]{64}$' "
+            "AND parsed_publication_sha256 ~ '^[0-9a-f]{64}$' "
+            "AND selected_artifact_content_sha256 ~ '^[0-9a-f]{64}$' "
+            "AND config_sha256 ~ '^[0-9a-f]{64}$' "
+            "AND (output_sha256 IS NULL OR output_sha256 ~ '^[0-9a-f]{64}$')",
+            name="hashes_format",
+        ),
+        CheckConstraint(
+            "chunker_name ~ '^[a-z][a-z0-9_]{0,63}$' "
+            "AND char_length(chunker_version) BETWEEN 1 AND 100 "
+            "AND token_counter_name ~ '^[a-z][a-z0-9_]{0,63}$' "
+            "AND char_length(token_counter_version) BETWEEN 1 AND 100 "
+            "AND char_length(normalization_version) BETWEEN 1 AND 100",
+            name="implementation_identity_format",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(config_json) = 'object'",
+            name="config_json_object",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'chunking', 'ready', 'failed')",
+            name="status_allowed",
+        ),
+        CheckConstraint("attempt_count >= 0", name="attempt_count_nonnegative"),
+        CheckConstraint(
+            "(status = 'pending' AND attempt_count = 0 "
+            "AND started_at IS NULL AND completed_at IS NULL) "
+            "OR (status = 'chunking' AND attempt_count >= 1 "
+            "AND started_at IS NOT NULL AND completed_at IS NULL) "
+            "OR (status IN ('ready', 'failed') AND attempt_count >= 1 "
+            "AND started_at IS NOT NULL AND completed_at IS NOT NULL)",
+            name="attempt_timestamps_match_status",
+        ),
+        CheckConstraint(
+            "started_at IS NULL OR started_at >= created_at",
+            name="started_after_created",
+        ),
+        CheckConstraint(
+            "completed_at IS NULL OR completed_at >= started_at",
+            name="completed_after_started",
+        ),
+        CheckConstraint(
+            "chunk_storage_key IS NULL "
+            f"OR (chunk_storage_key ~ '{_STORAGE_KEY_PATTERN}' "
+            "AND split_part(chunk_storage_key, '/', 1) = tenant_id::text "
+            "AND split_part(chunk_storage_key, '/', 2) = 'chunks' "
+            "AND split_part(split_part(chunk_storage_key, '/', 5), '.', 1) "
+            "= id::text AND right(chunk_storage_key, 5) = '.json')",
+            name="chunk_storage_key_format",
+        ),
+        CheckConstraint(
+            "(status = 'ready' AND output_sha256 IS NOT NULL "
+            "AND chunk_storage_key IS NOT NULL AND chunk_count IS NOT NULL "
+            "AND text_chunk_count IS NOT NULL AND table_chunk_count IS NOT NULL "
+            "AND total_token_count IS NOT NULL "
+            "AND excluded_span_count IS NOT NULL AND error_message IS NULL) "
+            "OR (status = 'failed' AND output_sha256 IS NULL "
+            "AND chunk_storage_key IS NULL AND chunk_count IS NULL "
+            "AND text_chunk_count IS NULL AND table_chunk_count IS NULL "
+            "AND total_token_count IS NULL AND excluded_span_count IS NULL "
+            "AND error_message IS NOT NULL) "
+            "OR (status IN ('pending', 'chunking') AND output_sha256 IS NULL "
+            "AND chunk_storage_key IS NULL AND chunk_count IS NULL "
+            "AND text_chunk_count IS NULL AND table_chunk_count IS NULL "
+            "AND total_token_count IS NULL AND excluded_span_count IS NULL "
+            "AND error_message IS NULL)",
+            name="result_matches_status",
+        ),
+        CheckConstraint(
+            "chunk_count IS NULL OR (chunk_count >= 1 "
+            "AND text_chunk_count >= 0 AND table_chunk_count >= 0 "
+            "AND text_chunk_count + table_chunk_count = chunk_count "
+            "AND total_token_count >= chunk_count "
+            "AND excluded_span_count >= 0)",
+            name="statistics_consistent",
+        ),
+        CheckConstraint(
+            "error_message IS NULL OR char_length(error_message) BETWEEN 1 AND 1000",
+            name="error_message_length",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    document_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    document_version_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    artifact_schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_hash_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    routed_schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    canonical_schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    parsed_publication_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    selected_artifact_content_sha256: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+    chunker_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    chunker_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    token_counter_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    token_counter_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    normalization_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    config_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    config_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="pending",
+        server_default="pending",
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    output_sha256: Mapped[str | None] = mapped_column(String(64))
+    chunk_storage_key: Mapped[str | None] = mapped_column(String(512))
+    chunk_count: Mapped[int | None] = mapped_column(Integer)
+    text_chunk_count: Mapped[int | None] = mapped_column(Integer)
+    table_chunk_count: Mapped[int | None] = mapped_column(Integer)
+    total_token_count: Mapped[int | None] = mapped_column(BigInteger)
+    excluded_span_count: Mapped[int | None] = mapped_column(Integer)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    document_version: Mapped[DocumentVersion] = relationship(
+        back_populates="chunk_sets",
+        foreign_keys=[tenant_id, document_version_id, document_id],
+    )
+    chunks: Mapped[list[DocumentChunk]] = relationship(
+        back_populates="chunk_set",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        foreign_keys=lambda: [
+            DocumentChunk.tenant_id,
+            DocumentChunk.document_chunk_set_id,
+            DocumentChunk.document_version_id,
+            DocumentChunk.document_id,
+        ],
+    )
+
+
+class DocumentIndexSet(Base):
+    """One deterministic index generation prepared before atomic activation."""
+
+    __tablename__ = "document_index_sets"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "id",
+            name="uq_document_index_sets_tenant_id",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "id",
+            "document_version_id",
+            "document_id",
+            "status",
+            name="uq_document_index_sets_active_target",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "id",
+            "document_chunk_set_id",
+            "document_version_id",
+            "document_id",
+            name="uq_document_index_sets_chunk_target",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "document_version_id",
+            "document_chunk_set_id",
+            "index_schema_version",
+            "embedding_identity_sha256",
+            "embedding_purpose",
+            "fts_builder_version",
+            name="uq_document_index_sets_version_identity",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "document_version_id", "document_id"],
+            [
+                "document_versions.tenant_id",
+                "document_versions.id",
+                "document_versions.document_id",
+            ],
+            name="fk_document_index_sets_tenant_version_document",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            [
+                "tenant_id",
+                "document_chunk_set_id",
+                "document_version_id",
+                "document_id",
+            ],
+            [
+                "document_chunk_sets.tenant_id",
+                "document_chunk_sets.id",
+                "document_chunk_sets.document_version_id",
+                "document_chunk_sets.document_id",
+            ],
+            name="fk_document_index_sets_tenant_set_version_document",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_document_index_sets_tenant_version_status",
+            "tenant_id",
+            "document_version_id",
+            "status",
+        ),
+        Index(
+            "ix_document_index_sets_tenant_document_created",
+            "tenant_id",
+            "document_id",
+            "created_at",
+        ),
+        CheckConstraint(
+            "index_schema_version = 'm2-document-index-set-v1' "
+            "AND embedding_purpose = 'document' "
+            "AND fts_builder_version = 'm2-fts-raw-retrieval-v1' "
+            "AND embedding_identity_sha256 ~ '^[0-9a-f]{64}$' "
+            "AND embedding_model = btrim(embedding_model) "
+            "AND char_length(embedding_model) BETWEEN 1 AND 200 "
+            "AND embedding_version = btrim(embedding_version) "
+            "AND char_length(embedding_version) BETWEEN 1 AND 100",
+            name="identity_format",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(embedding_identity_json) = 'object'",
+            name="identity_json_object",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'indexing', 'ready', 'failed')",
+            name="status_allowed",
+        ),
+        CheckConstraint("attempt_count >= 0", name="attempt_count_nonnegative"),
+        CheckConstraint(
+            "(status = 'pending' AND attempt_count = 0 "
+            "AND started_at IS NULL AND completed_at IS NULL) "
+            "OR (status = 'indexing' AND attempt_count >= 1 "
+            "AND started_at IS NOT NULL AND completed_at IS NULL) "
+            "OR (status IN ('ready', 'failed') AND attempt_count >= 1 "
+            "AND started_at IS NOT NULL AND completed_at IS NOT NULL)",
+            name="attempt_timestamps_match_status",
+        ),
+        CheckConstraint(
+            "started_at IS NULL OR started_at >= created_at",
+            name="started_after_created",
+        ),
+        CheckConstraint(
+            "completed_at IS NULL OR completed_at >= started_at",
+            name="completed_after_started",
+        ),
+        CheckConstraint(
+            "(status = 'ready' AND chunk_count IS NOT NULL "
+            "AND text_chunk_count IS NOT NULL AND table_chunk_count IS NOT NULL "
+            "AND total_token_count IS NOT NULL AND error_message IS NULL) "
+            "OR (status = 'failed' AND chunk_count IS NULL "
+            "AND text_chunk_count IS NULL AND table_chunk_count IS NULL "
+            "AND total_token_count IS NULL AND error_message IS NOT NULL) "
+            "OR (status IN ('pending', 'indexing') AND chunk_count IS NULL "
+            "AND text_chunk_count IS NULL AND table_chunk_count IS NULL "
+            "AND total_token_count IS NULL AND error_message IS NULL)",
+            name="result_matches_status",
+        ),
+        CheckConstraint(
+            "chunk_count IS NULL OR (chunk_count >= 1 "
+            "AND text_chunk_count >= 0 AND table_chunk_count >= 0 "
+            "AND text_chunk_count + table_chunk_count = chunk_count "
+            "AND total_token_count >= chunk_count)",
+            name="statistics_consistent",
+        ),
+        CheckConstraint(
+            "error_message IS NULL OR char_length(error_message) BETWEEN 1 AND 1000",
+            name="error_message_length",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    document_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    document_version_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    document_chunk_set_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    index_schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    embedding_identity_json: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+    )
+    embedding_identity_sha256: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+    embedding_model: Mapped[str] = mapped_column(String(200), nullable=False)
+    embedding_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    embedding_purpose: Mapped[str] = mapped_column(String(16), nullable=False)
+    fts_builder_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="pending",
+        server_default="pending",
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    chunk_count: Mapped[int | None] = mapped_column(Integer)
+    text_chunk_count: Mapped[int | None] = mapped_column(Integer)
+    table_chunk_count: Mapped[int | None] = mapped_column(Integer)
+    total_token_count: Mapped[int | None] = mapped_column(BigInteger)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DocumentChunk(Base):
+    """One persisted text or table Chunk prepared for later retrieval."""
+
+    __tablename__ = "document_chunks"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "document_index_set_id",
+            "chunk_id",
+            name="uq_document_chunks_index_set_chunk_id",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "document_index_set_id",
+            "chunk_index",
+            name="uq_document_chunks_index_set_chunk_index",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "document_version_id", "document_id"],
+            [
+                "document_versions.tenant_id",
+                "document_versions.id",
+                "document_versions.document_id",
+            ],
+            name="fk_document_chunks_tenant_version_document",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            [
+                "tenant_id",
+                "document_index_set_id",
+                "document_chunk_set_id",
+                "document_version_id",
+                "document_id",
+            ],
+            [
+                "document_index_sets.tenant_id",
+                "document_index_sets.id",
+                "document_index_sets.document_chunk_set_id",
+                "document_index_sets.document_version_id",
+                "document_index_sets.document_id",
+            ],
+            name=("fk_document_chunks_tenant_index_set_chunk_set_version_document"),
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            [
+                "tenant_id",
+                "document_chunk_set_id",
+                "document_version_id",
+                "document_id",
+            ],
+            [
+                "document_chunk_sets.tenant_id",
+                "document_chunk_sets.id",
+                "document_chunk_sets.document_version_id",
+                "document_chunk_sets.document_id",
+            ],
+            name="fk_document_chunks_tenant_set_version_document",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_document_chunks_tenant_document_version_index_set_index",
+            "tenant_id",
+            "document_id",
+            "document_version_id",
+            "document_index_set_id",
+            "chunk_index",
+        ),
+        Index(
+            "ix_document_chunks_search_vector_gin",
+            "search_vector",
+            postgresql_using="gin",
+        ),
+        Index(
+            "ix_document_chunks_embedding_hnsw_cosine",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        CheckConstraint(
+            "chunk_id ~ '^c[0-9]{6}$'",
+            name="chunk_id_format",
+        ),
+        CheckConstraint("chunk_index >= 1", name="chunk_index_positive"),
+        CheckConstraint("kind IN ('text', 'table')", name="kind_allowed"),
+        CheckConstraint(
+            "char_length(body_text) BETWEEN 1 AND 2000000 "
+            "AND char_length(retrieval_text) BETWEEN 1 AND 2000000 "
+            "AND char_length(fts_text) BETWEEN 1 AND 2000000",
+            name="text_length",
+        ),
+        CheckConstraint(
+            "token_count BETWEEN 1 AND 1000000",
+            name="token_count_range",
+        ),
+        CheckConstraint(
+            "content_sha256 ~ '^[0-9a-f]{64}$'",
+            name="content_sha256_format",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(heading_path) = 'array' "
+            "AND jsonb_array_length(heading_path) <= 9 "
+            "AND jsonb_typeof(page_numbers) = 'array' "
+            "AND jsonb_array_length(page_numbers) <= 2000 "
+            "AND jsonb_typeof(source_block_ids) = 'array' "
+            "AND jsonb_array_length(source_block_ids) BETWEEN 1 AND 1000 "
+            "AND jsonb_typeof(source_spans) = 'array' "
+            "AND jsonb_array_length(source_spans) BETWEEN 1 AND 1000 "
+            "AND jsonb_typeof(bounding_boxes) = 'array' "
+            "AND jsonb_typeof(warnings) = 'array' "
+            "AND jsonb_array_length(warnings) <= 100",
+            name="metadata_shapes",
+        ),
+        CheckConstraint(
+            "overlap_json IS NULL OR jsonb_typeof(overlap_json) = 'object'",
+            name="overlap_json_object",
+        ),
+        CheckConstraint(
+            "(kind = 'text' AND table_json IS NULL) "
+            "OR (kind = 'table' AND table_json IS NOT NULL "
+            "AND jsonb_typeof(table_json) = 'object' "
+            "AND table_json ? 'source_kind' AND table_json ? 'rows')",
+            name="table_matches_kind",
+        ),
+        CheckConstraint(
+            "embedding IS NOT NULL AND embedding_model IS NOT NULL "
+            "AND embedding_version IS NOT NULL",
+            name="embedding_identity_matches_vector",
+        ),
+        CheckConstraint(
+            "embedding_model IS NULL OR "
+            "(embedding_model = btrim(embedding_model) "
+            "AND char_length(embedding_model) BETWEEN 1 AND 200)",
+            name="embedding_model_format",
+        ),
+        CheckConstraint(
+            "embedding_version IS NULL OR "
+            "(embedding_version = btrim(embedding_version) "
+            "AND char_length(embedding_version) BETWEEN 1 AND 100)",
+            name="embedding_version_format",
+        ),
+        CheckConstraint(
+            "embedding_cache_key ~ '^sha256:[0-9a-f]{64}$'",
+            name="embedding_cache_key_format",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    document_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    document_version_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    document_chunk_set_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    document_index_set_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    chunk_id: Mapped[str] = mapped_column(String(16), nullable=False)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    body_text: Mapped[str] = mapped_column(Text, nullable=False)
+    retrieval_text: Mapped[str] = mapped_column(Text, nullable=False)
+    fts_text: Mapped[str] = mapped_column(Text, nullable=False)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    heading_path: Mapped[list[object]] = mapped_column(JSONB, nullable=False)
+    page_numbers: Mapped[list[object]] = mapped_column(JSONB, nullable=False)
+    source_block_ids: Mapped[list[object]] = mapped_column(JSONB, nullable=False)
+    source_spans: Mapped[list[object]] = mapped_column(JSONB, nullable=False)
+    bounding_boxes: Mapped[list[object]] = mapped_column(JSONB, nullable=False)
+    overlap_json: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
+    table_json: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
+    warnings: Mapped[list[object]] = mapped_column(JSONB, nullable=False)
+    search_vector: Mapped[str] = mapped_column(
+        TSVECTOR,
+        Computed("to_tsvector('simple'::regconfig, fts_text)", persisted=True),
+        nullable=False,
+    )
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1024))
+    embedding_model: Mapped[str | None] = mapped_column(String(200))
+    embedding_version: Mapped[str | None] = mapped_column(String(100))
+    embedding_cache_key: Mapped[str] = mapped_column(String(71), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    chunk_set: Mapped[DocumentChunkSet] = relationship(
+        back_populates="chunks",
+        foreign_keys=[
+            tenant_id,
+            document_chunk_set_id,
+            document_version_id,
+            document_id,
+        ],
     )
 
 

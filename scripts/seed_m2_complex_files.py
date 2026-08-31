@@ -149,20 +149,16 @@ def _validate_document_definition(document: object) -> None:
             "M2 complex filename does not match format"
         )
     if document["access_level"] not in _ALLOWED_ACCESS_LEVELS:
-        raise M2ComplexSeedDataMismatchError(
-            "M2 complex access level is invalid"
-        )
+        raise M2ComplexSeedDataMismatchError("M2 complex access level is invalid")
     if document["expected_route"] not in _ALLOWED_ROUTES:
-        raise M2ComplexSeedDataMismatchError(
-            "M2 complex expected route is invalid"
-        )
+        raise M2ComplexSeedDataMismatchError("M2 complex expected route is invalid")
     if not isinstance(document["requires_ocr"], bool):
-        raise M2ComplexSeedDataMismatchError(
-            "M2 complex OCR marker must be boolean"
-        )
+        raise M2ComplexSeedDataMismatchError("M2 complex OCR marker must be boolean")
     tags = document["complexity_tags"]
-    if not isinstance(tags, list) or len(tags) < 2 or any(
-        not isinstance(tag, str) or not tag for tag in tags
+    if (
+        not isinstance(tags, list)
+        or len(tags) < 2
+        or any(not isinstance(tag, str) or not tag for tag in tags)
     ):
         raise M2ComplexSeedDataMismatchError(
             "M2 complex document requires complexity tags"
@@ -177,7 +173,10 @@ def _validate_document_definition(document: object) -> None:
             raise M2ComplexSeedDataMismatchError(
                 "M2 complex golden fact fields do not match contract"
             )
-        if not all(isinstance(fact[field], str) and fact[field] for field in ("question", "answer")):
+        if not all(
+            isinstance(fact[field], str) and fact[field]
+            for field in ("question", "answer")
+        ):
             raise M2ComplexSeedDataMismatchError(
                 "M2 complex golden fact text is invalid"
             )
@@ -301,7 +300,14 @@ def _structure_summary(definition: dict[str, Any]) -> dict[str, Any]:
         "merged_ranges": {
             sheet["name"]: sheet["merged_ranges"] for sheet in content["sheets"]
         },
-        "formula_cells": ["补货测算!D3", "补货测算!G3", "补货测算!D4", "补货测算!G4", "补货测算!D9", "补货测算!D10"],
+        "formula_cells": [
+            "补货测算!D3",
+            "补货测算!G3",
+            "补货测算!D4",
+            "补货测算!G4",
+            "补货测算!D9",
+            "补货测算!D10",
+        ],
     }
 
 
@@ -338,7 +344,9 @@ def seed_m2_complex_files(
                 io.BytesIO(source.content),
                 _MIME_TYPES[source.definition["format"]],
             )
-            if stored.sha256 != source.sha256 or stored.size_bytes != len(source.content):
+            if stored.sha256 != source.sha256 or stored.size_bytes != len(
+                source.content
+            ):
                 raise M2ComplexSeedDataMismatchError(
                     "Stored M2 complex source does not match manifest"
                 )

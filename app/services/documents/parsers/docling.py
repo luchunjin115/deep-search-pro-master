@@ -81,8 +81,7 @@ class DoclingTableSnapshot(M1Schema):
     @model_validator(mode="after")
     def validate_cell_bounds(self) -> DoclingTableSnapshot:
         if any(
-            cell.end_row > self.row_count
-            or cell.end_column > self.column_count
+            cell.end_row > self.row_count or cell.end_column > self.column_count
             for cell in self.cells
         ):
             raise ValueError("Docling table cell exceeds its table bounds")
@@ -197,8 +196,7 @@ def _adapt_table(
         for column_index in range(item.column_count):
             source = by_coordinate.get((row_index, column_index))
             is_anchor = source is not None and (
-                source.start_row == row_index
-                and source.start_column == column_index
+                source.start_row == row_index and source.start_column == column_index
             )
             anchor = source if is_anchor else None
             text = anchor.text if anchor is not None else ""
@@ -215,9 +213,7 @@ def _adapt_table(
                     display_text=text,
                     data_type=("text" if text else "empty"),
                     row_span=(
-                        anchor.end_row - anchor.start_row
-                        if anchor is not None
-                        else 1
+                        anchor.end_row - anchor.start_row if anchor is not None else 1
                     ),
                     column_span=(
                         anchor.end_column - anchor.start_column
@@ -227,9 +223,7 @@ def _adapt_table(
                     row_header=bool(anchor and anchor.row_header),
                     column_header=bool(anchor and anchor.column_header),
                     locator=locator,
-                    bounding_box=(
-                        anchor.bounding_box if anchor is not None else None
-                    ),
+                    bounding_box=(anchor.bounding_box if anchor is not None else None),
                 )
             )
         rows.append(
@@ -245,9 +239,7 @@ def _adapt_table(
         )
 
     first_row = rows[0].cells
-    header_row_number = (
-        1 if any(cell.column_header for cell in first_row) else None
-    )
+    header_row_number = 1 if any(cell.column_header for cell in first_row) else None
     return ArtifactTableBlock(
         block_id=block_id,
         source_kind="document_table",

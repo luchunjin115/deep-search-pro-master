@@ -127,9 +127,12 @@ def test_xlsx_stream_failures_settings_and_constructor_limits_are_safe() -> None
     assert "private" not in str(stream_error.value).lower()
 
     settings = Settings(_env_file=None, xlsx_max_sheets=100)  # type: ignore[call-arg]
-    assert XlsxParser.from_settings(settings).parse(
-        io.BytesIO(make_structured_xlsx())
-    ).sheet_count == 3
+    assert (
+        XlsxParser.from_settings(settings)
+        .parse(io.BytesIO(make_structured_xlsx()))
+        .sheet_count
+        == 3
+    )
     with pytest.raises(ValueError, match="positive and bounded"):
         XlsxParser(max_columns=0)
     with pytest.raises(ValueError, match="positive and bounded"):

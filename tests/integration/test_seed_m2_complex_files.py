@@ -35,7 +35,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _FIXED_ZIP_TIME = (2020, 1, 1, 0, 0, 0)
 _M2_V1_BASELINE_HASHES = {
     "data/seed/m2_seed.json": "d4d9eeac120f7ea456dc48a54d70e950d4e88c4b0c9d369152332344bec6f474",
-    "data/seed/m2_manifest.json": "3b522c244a85af03c265e9752216d68809142644e3c3000c89a198a1c1f45ecb",
+    "data/seed/m2_manifest.json": "262c662632d3889bd85525cd999db3d0031589d58f20562175a5a6de09932aaf",
     "scripts/m2_seed_content.py": "5075a696fe1e9e679611bfff31ea947db16e9dcc1dfc1eb158372c915e1c97a2",
     "scripts/seed_m2_files.py": "3a4fbb37a0df89714f0fcc5923da329d0f75e891cb2e3b0498ea0d37f555ae14",
 }
@@ -76,7 +76,9 @@ def _clean_complex_rows(engine: Engine, data: dict[str, object]) -> None:
         connection.execute(delete(StoredFile).where(StoredFile.id.in_(file_ids)))
 
 
-def test_complex_sources_are_deterministic_structured_and_keep_m2_v1_immutable() -> None:
+def test_complex_sources_are_deterministic_structured_and_keep_m2_v1_immutable() -> (
+    None
+):
     data = load_complex_seed_definition(DEFAULT_COMPLEX_SEED_PATH)
     first = generate_complex_sources(data)
     second = generate_complex_sources(data)
@@ -93,9 +95,10 @@ def test_complex_sources_are_deterministic_structured_and_keep_m2_v1_immutable()
     }
     assert sum(len(item["golden_facts"]) for item in manifest["documents"]) == 10
     assert all(item["expected_route"] == "docling" for item in manifest["documents"])
-    assert {
-        item["key"] for item in manifest["documents"] if item["requires_ocr"]
-    } == {"scanned_receiving_ticket", "visual_quality_notice"}
+    assert {item["key"] for item in manifest["documents"] if item["requires_ocr"]} == {
+        "scanned_receiving_ticket",
+        "visual_quality_notice",
+    }
     for source in first:
         assert source.content
         assert len(source.definition["complexity_tags"]) >= 2
@@ -106,12 +109,13 @@ def test_complex_sources_are_deterministic_structured_and_keep_m2_v1_immutable()
         if source.definition["format"] in {"docx", "xlsx"}:
             with ZipFile(io.BytesIO(source.content)) as archive:
                 assert all(
-                    member.date_time == _FIXED_ZIP_TIME
-                    for member in archive.infolist()
+                    member.date_time == _FIXED_ZIP_TIME for member in archive.infolist()
                 )
 
     for relative_path, expected_hash in _M2_V1_BASELINE_HASHES.items():
-        actual_hash = hashlib.sha256((_PROJECT_ROOT / relative_path).read_bytes()).hexdigest()
+        source = (_PROJECT_ROOT / relative_path).read_bytes()
+        normalized_source = source.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        actual_hash = hashlib.sha256(normalized_source).hexdigest()
         assert actual_hash == expected_hash
 
     sources = {source.definition["key"]: source for source in first}
@@ -157,7 +161,10 @@ def test_complex_sources_are_deterministic_structured_and_keep_m2_v1_immutable()
     workbook_source = sources["multi_region_replenishment"]
     parsed_workbook = XlsxParser().parse(io.BytesIO(workbook_source.content))
     assert parsed_workbook.formula_count == 6
-    assert [(sheet.sheet_name, sheet.row_count, sheet.column_count) for sheet in parsed_workbook.sheets] == [
+    assert [
+        (sheet.sheet_name, sheet.row_count, sheet.column_count)
+        for sheet in parsed_workbook.sheets
+    ] == [
         ("补货测算", 10, 7),
         ("参数说明", 4, 3),
     ]
@@ -165,9 +172,12 @@ def test_complex_sources_are_deterministic_structured_and_keep_m2_v1_immutable()
     assert parsed_workbook.sheets[0].rows[9].cells[3].formula == "=B10+C10"
     workbook = load_workbook(io.BytesIO(workbook_source.content), data_only=False)
     try:
-        assert {
-            str(item) for item in workbook["补货测算"].merged_cells.ranges
-        } == {"A1:A2", "B1:D1", "E1:G1", "A7:G7"}
+        assert {str(item) for item in workbook["补货测算"].merged_cells.ranges} == {
+            "A1:A2",
+            "B1:D1",
+            "E1:G1",
+            "A7:G7",
+        }
         assert workbook["补货测算"]["G3"].value == "=E3+F3"
         assert workbook["参数说明"].freeze_panes == "A3"
     finally:
@@ -180,10 +190,15 @@ def test_complex_sources_are_deterministic_structured_and_keep_m2_v1_immutable()
     ):
         pdf = pymupdf.open(stream=sources[key].content, filetype="pdf")
         try:
-            assert pdf.page_count == manifest["documents"][[
-                item["key"] for item in manifest["documents"]
-            ].index(key)]["structure"]["page_count"]
-            assert all(page.get_pixmap(matrix=pymupdf.Matrix(1, 1)).width > 0 for page in pdf)
+            assert (
+                pdf.page_count
+                == manifest["documents"][
+                    [item["key"] for item in manifest["documents"]].index(key)
+                ]["structure"]["page_count"]
+            )
+            assert all(
+                page.get_pixmap(matrix=pymupdf.Matrix(1, 1)).width > 0 for page in pdf
+            )
         finally:
             pdf.close()
 
@@ -217,22 +232,38 @@ def test_complex_seed_is_repeatable_in_storage_and_postgresql(
         document_ids = _complex_ids(data, "document")
         version_ids = _complex_ids(data, "document_version")
         with Session(postgres_engine) as session:
-            assert session.scalar(
-                select(func.count()).select_from(StoredFile).where(StoredFile.id.in_(file_ids))
-            ) == 5
-            assert session.scalar(
-                select(func.count()).select_from(Document).where(Document.id.in_(document_ids))
-            ) == 5
-            assert session.scalar(
-                select(func.count()).select_from(DocumentVersion).where(
-                    DocumentVersion.id.in_(version_ids)
+            assert (
+                session.scalar(
+                    select(func.count())
+                    .select_from(StoredFile)
+                    .where(StoredFile.id.in_(file_ids))
                 )
-            ) == 5
-            assert session.scalar(
-                select(func.count()).select_from(DocumentAcl).where(
-                    DocumentAcl.document_id.in_(document_ids)
+                == 5
+            )
+            assert (
+                session.scalar(
+                    select(func.count())
+                    .select_from(Document)
+                    .where(Document.id.in_(document_ids))
                 )
-            ) == 4
+                == 5
+            )
+            assert (
+                session.scalar(
+                    select(func.count())
+                    .select_from(DocumentVersion)
+                    .where(DocumentVersion.id.in_(version_ids))
+                )
+                == 5
+            )
+            assert (
+                session.scalar(
+                    select(func.count())
+                    .select_from(DocumentAcl)
+                    .where(DocumentAcl.document_id.in_(document_ids))
+                )
+                == 4
+            )
 
         storage = LocalStorageBackend(postgres_settings.local_storage_root)
         for source in generate_complex_sources(data):

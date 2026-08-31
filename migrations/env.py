@@ -11,6 +11,9 @@ from app.models import (
     AgentRun,
     Document,
     DocumentAcl,
+    DocumentChunk,
+    DocumentChunkSet,
+    DocumentIndexSet,
     DocumentVersion,
     Evidence,
     InventorySnapshot,
@@ -52,6 +55,9 @@ _models = (
     StoredFile,
     Document,
     DocumentVersion,
+    DocumentChunkSet,
+    DocumentIndexSet,
+    DocumentChunk,
     DocumentAcl,
 )
 target_metadata = Base.metadata

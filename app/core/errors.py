@@ -415,6 +415,51 @@ class DocumentParsingError(ApplicationError):
         )
 
 
+class DocumentChunkPublicationError(ApplicationError):
+    """One claimed Chunk publication failed without exposing private internals."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "INTERNAL_ERROR",
+            "文档切块未能完成，请稍后重试",
+            retryable=True,
+        )
+
+
+class DocumentIndexingError(ApplicationError):
+    """One claimed document index attempt failed without leaking internals."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "INTERNAL_ERROR",
+            "文档索引未能完成，请稍后重试",
+            retryable=True,
+        )
+
+
+class EmbeddingInputError(ApplicationError):
+    """Embedding input is empty, malformed, or outside the bounded contract."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "VALIDATION_ERROR",
+            "向量文本不符合长度或数量限制",
+            retryable=False,
+            field="texts",
+        )
+
+
+class EmbeddingProviderError(ApplicationError):
+    """Embedding generation failed without exposing text, paths, or model internals."""
+
+    def __init__(self, *, retryable: bool = False) -> None:
+        super().__init__(
+            "INTERNAL_ERROR",
+            "文本向量生成失败，请检查配置或稍后重试",
+            retryable=retryable,
+        )
+
+
 class DocumentVersionConflictError(ApplicationError):
     """A document already contains the same immutable content revision."""
 

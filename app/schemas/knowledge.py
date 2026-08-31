@@ -110,6 +110,25 @@ class DocumentVersionResponse(M1Schema):
     created_at: AwareDatetime
 
 
+class DocumentIndexResponse(M1Schema):
+    """Safe public result for one completed or reused document index."""
+
+    index_set_id: UUID
+    document_id: UUID
+    version_id: UUID
+    chunk_set_id: UUID
+    status: Literal["ready"] = "ready"
+    reused: bool
+    version_activated: bool
+    embedding_model: str = Field(min_length=1, max_length=256)
+    embedding_version: str = Field(min_length=1, max_length=256)
+    chunk_count: int = Field(ge=1, le=1_100_000)
+    text_chunk_count: int = Field(ge=0, le=1_100_000)
+    table_chunk_count: int = Field(ge=0, le=1_100_000)
+    total_token_count: int = Field(ge=1)
+    completed_at: AwareDatetime
+
+
 class ParsedDocumentPublication(M1Schema):
     """Safe result of one internal parse publication without its Storage key."""
 
@@ -122,6 +141,22 @@ class ParsedDocumentPublication(M1Schema):
     artifact_content_sha256: Sha256
     published_sha256: Sha256
     warning_count: int = Field(ge=0, le=6000)
+
+
+class DocumentChunkSetPublication(M1Schema):
+    """Safe result of one Chunk Artifact publication without its Storage key."""
+
+    chunk_set_id: UUID
+    document_id: UUID
+    version_id: UUID
+    status: Literal["ready"] = "ready"
+    config_sha256: Sha256
+    output_sha256: Sha256
+    chunk_count: int = Field(ge=1, le=1_100_000)
+    text_chunk_count: int = Field(ge=0, le=1_100_000)
+    table_chunk_count: int = Field(ge=0, le=1_100_000)
+    total_token_count: int = Field(ge=1)
+    excluded_span_count: int = Field(ge=0, le=1_100_000)
 
 
 class DocumentAclResponse(M1Schema):
