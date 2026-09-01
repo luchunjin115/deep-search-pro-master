@@ -10,8 +10,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BGE_M3_MODEL_ID = "BAAI/bge-m3"
 BGE_M3_REVISION = "5617a9f61b028005a4858fdac845db406aefb181"
+BGE_RERANKER_MODEL_ID = "BAAI/bge-reranker-v2-m3"
+BGE_RERANKER_REVISION = "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
 RETRIEVAL_QUERY_HARD_MAX_CHARACTERS = 2000
 RETRIEVAL_CANDIDATE_HARD_MAX = 100
+CONTEXT_TOKEN_HARD_MAX = 16_000
+CONTEXT_SEGMENT_HARD_MAX = 12
+CONTEXT_NEIGHBOR_WINDOW_HARD_MAX = 1
 
 
 class Settings(BaseSettings):
@@ -179,18 +184,20 @@ class Settings(BaseSettings):
 
     reranker_backend: Literal["fake", "bge"] = "fake"
     reranker_model: str = Field(
-        default="BAAI/bge-reranker-v2-m3",
+        default=BGE_RERANKER_MODEL_ID,
         min_length=1,
         max_length=200,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$",
     )
     reranker_revision: str = Field(
-        default="main",
+        default=BGE_RERANKER_REVISION,
         min_length=1,
         max_length=100,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$",
     )
     reranker_batch_size: int = Field(default=2, ge=1, le=16)
+    reranker_max_length: int = Field(default=8192, ge=8192, le=8192)
+    reranker_precision: Literal["float32", "float16", "bfloat16"] = "float32"
     model_device: Literal["cpu", "cuda", "auto"] = "cpu"
     model_local_files_only: bool = True
 
@@ -222,6 +229,18 @@ class Settings(BaseSettings):
     )
     rrf_k: int = Field(default=60, ge=1, le=200)
     reranker_top_k: int = Field(default=8, ge=5, le=8)
+    # M2-18上下文预算完全由服务端控制；调用者不能扩大这些硬上限。
+    context_max_tokens: int = Field(default=4000, ge=700, le=CONTEXT_TOKEN_HARD_MAX)
+    context_max_segments: int = Field(
+        default=CONTEXT_SEGMENT_HARD_MAX,
+        ge=5,
+        le=CONTEXT_SEGMENT_HARD_MAX,
+    )
+    context_neighbor_window: int = Field(
+        default=1,
+        ge=0,
+        le=CONTEXT_NEIGHBOR_WINDOW_HARD_MAX,
+    )
 
     @field_validator("api_v1_prefix")
     @classmethod
@@ -323,8 +342,15 @@ class Settings(BaseSettings):
             )
         if self.embedding_backend == "bge" and not self.model_local_files_only:
             raise ValueError("真实Embedding必须启用本地文件离线模式")
-        if self.reranker_backend == "bge" and self.reranker_revision == "main":
-            raise ValueError("真实Reranker必须配置固定RERANKER_REVISION")
+        if self.reranker_backend == "bge" and (
+            self.reranker_model != BGE_RERANKER_MODEL_ID
+            or self.reranker_revision != BGE_RERANKER_REVISION
+        ):
+            raise ValueError(
+                "真实Reranker必须配置固定RERANKER_MODEL和RERANKER_REVISION"
+            )
+        if self.reranker_backend == "bge" and not self.model_local_files_only:
+            raise ValueError("真实Reranker必须启用本地文件离线模式")
         if self.upload_stream_chunk_size_bytes > self.upload_max_file_size_bytes:
             raise ValueError("上传流式读取块不能大于单文件上限")
         if self.chunk_target_tokens > self.chunk_max_tokens:
@@ -345,6 +371,10 @@ class Settings(BaseSettings):
             self.dense_candidate_count + self.lexical_candidate_count
         ):
             raise ValueError("HYBRID_CANDIDATE_COUNT不能大于两路候选数量之和")
+        if self.context_max_tokens < self.chunk_max_tokens:
+            raise ValueError("CONTEXT_MAX_TOKENS不能小于CHUNK_MAX_TOKENS")
+        if self.context_max_segments < self.reranker_top_k:
+            raise ValueError("CONTEXT_MAX_SEGMENTS不能小于RERANKER_TOP_K")
         return self
 
 

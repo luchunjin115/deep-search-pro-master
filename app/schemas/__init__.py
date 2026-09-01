@@ -15,7 +15,18 @@ from app.schemas.common import (
     ToolEnvelope,
     ToolMeta,
 )
-from app.schemas.evidence import EvidenceDetail, EvidenceSummary
+from app.schemas.context import (
+    CitationValidationResult,
+    ContextBundle,
+    ContextCitation,
+    ContextSegment,
+)
+from app.schemas.evidence import (
+    DocumentEvidenceDetail,
+    DocumentEvidenceSummary,
+    EvidenceDetail,
+    EvidenceSummary,
+)
 from app.schemas.files import (
     FileListResponse,
     FileRegistrationInput,
@@ -67,6 +78,10 @@ __all__ = [
     "ApiErrorResponse",
     "ChatMessageRequest",
     "ChatSuccessResponse",
+    "CitationValidationResult",
+    "ContextBundle",
+    "ContextCitation",
+    "ContextSegment",
     "CreateThreadRequest",
     "CsvRetrievalSourceLocator",
     "CurrentUser",
@@ -76,6 +91,8 @@ __all__ = [
     "DocumentChunkSetPublication",
     "DocumentCreateInput",
     "DocumentDetailResponse",
+    "DocumentEvidenceDetail",
+    "DocumentEvidenceSummary",
     "DocumentIndexResponse",
     "DocumentIndexStateUpdate",
     "DocumentParseStateUpdate",

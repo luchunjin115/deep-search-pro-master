@@ -233,6 +233,50 @@ class RetrievalFtsIdentity(M1Schema):
     )
 
 
+class RetrievalRerankerIdentity(M1Schema):
+    """Public logical identity for reproducible Reranker scores."""
+
+    contract_version: str = Field(min_length=1, max_length=128)
+    provider: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+    )
+    model_id: str = Field(
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$",
+    )
+    revision: str = Field(
+        min_length=1,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$",
+    )
+    max_length: int = Field(ge=1, le=8192)
+    precision: RetrievalPrecision
+    score_transform: Literal["sigmoid"] = "sigmoid"
+
+
+class RetrievalRerankerScore(M1Schema):
+    """One finite cross-encoder score; normalized_score is not probability."""
+
+    rank: int = Field(ge=1)
+    raw_score: FiniteFloat
+    normalized_score: FiniteFloat = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_sigmoid_transform(self) -> RetrievalRerankerScore:
+        expected = _sigmoid(float(self.raw_score))
+        if not math.isclose(
+            float(self.normalized_score),
+            expected,
+            rel_tol=0,
+            abs_tol=1e-6,
+        ):
+            raise ValueError("normalized score must equal sigmoid of raw score")
+        return self
+
+
 class RetrievalResult(M1Schema):
     """One safe public Chunk candidate with optional per-list score decomposition."""
 
@@ -243,6 +287,13 @@ class RetrievalResult(M1Schema):
     scores: RetrievalScoreBreakdown
     rrf_score: FiniteFloat | None = Field(default=None, gt=0)
     final_rank: int = Field(ge=1)
+
+
+class RerankedRetrievalResult(RetrievalResult):
+    """One unchanged Hybrid candidate with its new Reranker position."""
+
+    hybrid_rank: int = Field(ge=1)
+    reranker: RetrievalRerankerScore
 
 
 class RetrievalResponse(M1Schema):
@@ -294,8 +345,58 @@ class RetrievalResponse(M1Schema):
         return self
 
 
+class RerankedRetrievalResponse(M1Schema):
+    """A bounded, auditable reranking of server-built Hybrid candidates."""
+
+    mode: Literal["reranked"] = "reranked"
+    embedding_identity: RetrievalEmbeddingIdentity
+    fts_identity: RetrievalFtsIdentity
+    rrf_k: int = Field(ge=1, le=200)
+    reranker_identity: RetrievalRerankerIdentity
+    input_candidate_count: int = Field(ge=0, le=100)
+    top_k: int = Field(ge=5, le=8)
+    results: list[RerankedRetrievalResult] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def validate_reranked_results(self) -> RerankedRetrievalResponse:
+        expected_ranks = list(range(1, len(self.results) + 1))
+        if [result.final_rank for result in self.results] != expected_ranks:
+            raise ValueError("final ranks must be contiguous and ordered")
+        if [result.reranker.rank for result in self.results] != expected_ranks:
+            raise ValueError("Reranker score rank must equal final rank")
+
+        hybrid_ranks = [result.hybrid_rank for result in self.results]
+        if len(hybrid_ranks) != len(set(hybrid_ranks)):
+            raise ValueError("Reranked Hybrid ranks must be unique")
+        if any(rank > self.input_candidate_count for rank in hybrid_ranks):
+            raise ValueError("Hybrid rank cannot exceed input candidate count")
+        if len(self.results) > min(self.top_k, self.input_candidate_count):
+            raise ValueError("Reranked result count cannot exceed server top k")
+        if any(result.rrf_score is None for result in self.results):
+            raise ValueError("Reranked candidates must preserve Hybrid RRF scores")
+
+        order = sorted(
+            self.results,
+            key=lambda result: (
+                -float(result.reranker.normalized_score),
+                result.hybrid_rank,
+                result.identity.chunk_id,
+            ),
+        )
+        if self.results != order:
+            raise ValueError("Reranked results violate stable score order")
+        return self
+
+
 def _validate_optional_row_range(row_start: int | None, row_end: int | None) -> None:
     if (row_start is None) != (row_end is None):
         raise ValueError("row_start and row_end must be provided together")
     if row_start is not None and row_end is not None and row_end < row_start:
         raise ValueError("row_end must be greater than or equal to row_start")
+
+
+def _sigmoid(value: float) -> float:
+    if value >= 0:
+        return 1 / (1 + math.exp(-value))
+    exponential = math.exp(value)
+    return exponential / (1 + exponential)

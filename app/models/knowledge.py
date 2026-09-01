@@ -266,6 +266,13 @@ class DocumentVersion(Base):
         ),
         UniqueConstraint(
             "tenant_id",
+            "id",
+            "document_id",
+            "file_id",
+            name="uq_document_versions_evidence_source",
+        ),
+        UniqueConstraint(
+            "tenant_id",
             "document_id",
             "version_no",
             name="uq_document_versions_tenant_document_version",
@@ -798,6 +805,15 @@ class DocumentChunk(Base):
             "document_index_set_id",
             "chunk_index",
             name="uq_document_chunks_index_set_chunk_index",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "id",
+            "document_index_set_id",
+            "document_chunk_set_id",
+            "document_version_id",
+            "document_id",
+            name="uq_document_chunks_evidence_source",
         ),
         ForeignKeyConstraint(
             ["tenant_id", "document_version_id", "document_id"],

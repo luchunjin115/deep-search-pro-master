@@ -12,10 +12,18 @@ from app.models.knowledge import (
     DocumentVersion,
     StoredFile,
 )
-from app.models.runtime import AgentRun, Evidence, Message, Thread, ToolCall
+from app.models.runtime import (
+    AgentRun,
+    ContextArtifact,
+    Evidence,
+    Message,
+    Thread,
+    ToolCall,
+)
 
 __all__ = [
     "AgentRun",
+    "ContextArtifact",
     "Document",
     "DocumentAcl",
     "DocumentChunk",

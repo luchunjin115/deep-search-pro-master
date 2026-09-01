@@ -5,7 +5,7 @@ import pytest
 from packaging.requirements import Requirement
 from pydantic import ValidationError
 
-from app.core.config import Settings
+from app.core.config import BGE_RERANKER_REVISION, Settings
 
 M2_ENVIRONMENT_VARIABLES = (
     "STORAGE_BACKEND",
@@ -57,6 +57,8 @@ M2_ENVIRONMENT_VARIABLES = (
     "RERANKER_MODEL",
     "RERANKER_REVISION",
     "RERANKER_BATCH_SIZE",
+    "RERANKER_MAX_LENGTH",
+    "RERANKER_PRECISION",
     "MODEL_DEVICE",
     "MODEL_LOCAL_FILES_ONLY",
     "CHUNK_TARGET_TOKENS",
@@ -142,6 +144,9 @@ def test_m2_settings_use_safe_local_defaults() -> None:
     assert settings.embedding_precision == "float32"
     assert settings.reranker_backend == "fake"
     assert settings.reranker_model == "BAAI/bge-reranker-v2-m3"
+    assert settings.reranker_revision == BGE_RERANKER_REVISION
+    assert settings.reranker_max_length == 8192
+    assert settings.reranker_precision == "float32"
     assert settings.model_device == "cpu"
     assert settings.model_local_files_only is True
     assert settings.docling_backend == "disabled"
@@ -277,7 +282,10 @@ def test_env_example_contains_a_valid_m2_configuration() -> None:
         ({"embedding_dimensions": 768}, "1024"),
         ({"embedding_normalize": False}, "True"),
         ({"embedding_backend": "bge"}, "EMBEDDING_REVISION"),
-        ({"reranker_backend": "bge"}, "RERANKER_REVISION"),
+        (
+            {"reranker_backend": "bge", "reranker_revision": "main"},
+            "RERANKER_REVISION",
+        ),
     ),
 )
 def test_m2_settings_reject_inconsistent_values(
@@ -357,7 +365,7 @@ def test_new_app_ast_does_not_import_legacy_file_or_ragflow_runtime() -> None:
         assert imported_roots.isdisjoint(forbidden_roots), source_file
 
 
-def test_m2_16_2_stops_after_fts_builder_without_retrieval_execution() -> None:
+def test_m2_17_5_adds_formal_reranker_verification_without_api_or_rag() -> None:
     project_root = Path(__file__).parents[2]
 
     assert (project_root / "app/services/storage").is_dir()
@@ -417,14 +425,26 @@ def test_m2_16_2_stops_after_fts_builder_without_retrieval_execution() -> None:
     assert (project_root / "app/api/routers/documents.py").is_file()
     assert (project_root / "scripts/verify_m2_index_pipeline.py").is_file()
     assert (project_root / "tests/smoke/test_document_index_bge_smoke.py").is_file()
+    assert (project_root / "scripts/verify_m2_retrieval.py").is_file()
+    assert (project_root / "tests/unit/test_m2_retrieval_verification.py").is_file()
+    assert (project_root / "tests/smoke/test_m2_retrieval_bge_smoke.py").is_file()
 
     retrieval = project_root / "app/services/retrieval"
     assert (project_root / "app/schemas/retrieval.py").is_file()
     assert (retrieval / "errors.py").is_file()
     assert (retrieval / "lexical_text.py").is_file()
+    assert (project_root / "app/repositories/retrieval.py").is_file()
+    assert (retrieval / "dense.py").is_file()
+    assert (retrieval / "lexical.py").is_file()
+    assert (retrieval / "result_mapping.py").is_file()
+    assert (retrieval / "hybrid.py").is_file()
     assert not (retrieval / "keyword.py").exists()
-    assert not (retrieval / "dense.py").exists()
-    assert not (retrieval / "hybrid.py").exists()
-    assert not (retrieval / "reranker.py").exists()
+    assert (retrieval / "reranker_provider.py").is_file()
+    assert (retrieval / "reranker.py").is_file()
+    assert (project_root / "scripts/download_m2_reranker.py").is_file()
+    assert (project_root / "scripts/benchmark_m2_reranker.py").is_file()
+    assert (project_root / "tests/smoke/test_bge_reranker_smoke.py").is_file()
+    assert (project_root / "scripts/verify_m2_reranker.py").is_file()
+    assert (project_root / "tests/unit/test_m2_reranker_verification.py").is_file()
     assert not (project_root / "app/api/routers/retrieval.py").exists()
     assert not (project_root / "app/api/routers/search.py").exists()

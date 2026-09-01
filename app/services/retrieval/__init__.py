@@ -1,5 +1,14 @@
 """Retrieval primitives implemented independently from HTTP and persistence."""
 
+from app.services.retrieval.context import (
+    CONTEXT_BUILDER_VERSION,
+    CONTEXT_RETRIEVAL_SNAPSHOT_VERSION,
+    BuiltContext,
+    ContextBuilderService,
+    ContextWindowReader,
+    validate_built_context,
+)
+from app.services.retrieval.dense import DenseRetrievalService
 from app.services.retrieval.embedding import (
     BgeM3EmbeddingProvider,
     EmbeddingBatch,
@@ -10,13 +19,19 @@ from app.services.retrieval.embedding import (
     create_embedding_provider,
 )
 from app.services.retrieval.errors import (
+    ContextBuildError,
+    ContextDataContractError,
+    ContextInputError,
     RetrievalDatabaseTimeoutError,
     RetrievalDatabaseUnavailableError,
     RetrievalEmbeddingIdentityMismatchError,
     RetrievalEmbeddingProviderUnavailableError,
     RetrievalInputError,
     RetrievalInternalError,
+    RetrievalRerankerProviderUnavailableError,
 )
+from app.services.retrieval.hybrid import HybridRetrievalService
+from app.services.retrieval.lexical import LexicalRetrievalService
 from app.services.retrieval.lexical_text import (
     FTS_BUILDER_VERSION,
     FTS_TEXT_BUILDER_CONTRACT_VERSION,
@@ -28,28 +43,65 @@ from app.services.retrieval.lexical_text import (
     build_fts_text,
     get_fts_text_builder,
 )
+from app.services.retrieval.reranker import RerankerRetrievalService
+from app.services.retrieval.reranker_provider import (
+    BgeRerankerProvider,
+    FakeRerankerProvider,
+    RerankerBatch,
+    RerankerIdentity,
+    RerankerPairScore,
+    RerankerProvider,
+    build_reranker_pair_key,
+    create_reranker_provider,
+    validate_reranker_batch,
+    verify_reranker_snapshot,
+)
 
 __all__ = [
+    "CONTEXT_BUILDER_VERSION",
+    "CONTEXT_RETRIEVAL_SNAPSHOT_VERSION",
     "FTS_BUILDER_VERSION",
     "FTS_TEXT_BUILDER_CONTRACT_VERSION",
     "BgeM3EmbeddingProvider",
+    "BgeRerankerProvider",
+    "BuiltContext",
     "BuiltFtsText",
+    "ContextBuildError",
+    "ContextBuilderService",
+    "ContextDataContractError",
+    "ContextInputError",
+    "ContextWindowReader",
+    "DenseRetrievalService",
     "EmbeddingBatch",
     "EmbeddingIdentity",
     "EmbeddingProvider",
     "EmbeddingPurpose",
     "FakeEmbeddingProvider",
+    "FakeRerankerProvider",
     "FtsTextBuilderError",
     "FtsTextBuilderIdentity",
     "FtsTextPurpose",
+    "HybridRetrievalService",
     "JiebaFtsTextBuilder",
+    "LexicalRetrievalService",
+    "RerankerBatch",
+    "RerankerIdentity",
+    "RerankerPairScore",
+    "RerankerProvider",
+    "RerankerRetrievalService",
     "RetrievalDatabaseTimeoutError",
     "RetrievalDatabaseUnavailableError",
     "RetrievalEmbeddingIdentityMismatchError",
     "RetrievalEmbeddingProviderUnavailableError",
     "RetrievalInputError",
     "RetrievalInternalError",
+    "RetrievalRerankerProviderUnavailableError",
     "build_fts_text",
+    "build_reranker_pair_key",
     "create_embedding_provider",
+    "create_reranker_provider",
     "get_fts_text_builder",
+    "validate_built_context",
+    "validate_reranker_batch",
+    "verify_reranker_snapshot",
 ]

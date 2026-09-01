@@ -290,8 +290,98 @@ class ToolCall(Base):
     )
 
 
+class ContextArtifact(Base):
+    """One immutable, tenant-scoped Context Bundle identity and budget snapshot."""
+
+    __tablename__ = "context_artifacts"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "id",
+            name="uq_context_artifacts_tenant_id",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "requested_by_user_id",
+            "identity_sha256",
+            name="uq_context_artifacts_tenant_user_identity",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "requested_by_user_id"],
+            ["users.tenant_id", "users.id"],
+            name="fk_context_artifacts_tenant_user",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "contract_version = 'm2-context-bundle-v1' "
+            "AND token_counter_version = 'm2-unicode-token-counter-v1'",
+            name="versions_allowed",
+        ),
+        CheckConstraint(
+            "query_sha256 ~ '^[0-9a-f]{64}$' "
+            "AND retrieval_snapshot_sha256 ~ '^[0-9a-f]{64}$' "
+            "AND config_sha256 ~ '^[0-9a-f]{64}$' "
+            "AND context_sha256 ~ '^[0-9a-f]{64}$' "
+            "AND identity_sha256 ~ '^[0-9a-f]{64}$'",
+            name="hashes_format",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(retrieval_snapshot_json) = 'object' "
+            "AND jsonb_typeof(config_json) = 'object'",
+            name="json_objects",
+        ),
+        CheckConstraint(
+            "max_tokens BETWEEN 700 AND 16000 "
+            "AND total_tokens BETWEEN 0 AND max_tokens "
+            "AND segment_count BETWEEN 0 AND 12",
+            name="budget_bounds",
+        ),
+        CheckConstraint(
+            "(segment_count = 0 AND total_tokens = 0) "
+            "OR (segment_count >= 1 AND total_tokens >= segment_count)",
+            name="empty_state_consistent",
+        ),
+        Index(
+            "ix_context_artifacts_tenant_user_created",
+            "tenant_id",
+            "requested_by_user_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    requested_by_user_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    contract_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    token_counter_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    query_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    retrieval_snapshot_json: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+    )
+    retrieval_snapshot_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    config_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    config_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    context_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    identity_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    segment_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    requested_by_user: Mapped[User] = relationship()
+    evidences: Mapped[list[Evidence]] = relationship(
+        back_populates="context_artifact",
+        viewonly=True,
+    )
+
+
 class Evidence(Base):
-    """A structured, tenant-scoped fact supporting an M1 answer."""
+    """A tenant-scoped database or document fact supporting an answer."""
 
     __tablename__ = "evidences"
     __table_args__ = (
@@ -301,42 +391,167 @@ class Evidence(Base):
             name="fk_evidences_tenant_tool_call_run",
             ondelete="CASCADE",
         ),
-        CheckConstraint("source_type = 'database'", name="source_type_database"),
-        CheckConstraint(
-            "source_name IN ('synthetic_inventory', 'synthetic_product_catalog')",
-            name="source_name_allowed",
+        ForeignKeyConstraint(
+            ["tenant_id", "context_artifact_id"],
+            ["context_artifacts.tenant_id", "context_artifacts.id"],
+            name="fk_evidences_tenant_context",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "document_version_id", "document_id", "file_id"],
+            [
+                "document_versions.tenant_id",
+                "document_versions.id",
+                "document_versions.document_id",
+                "document_versions.file_id",
+            ],
+            name="fk_evidences_tenant_version_document_file",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            [
+                "tenant_id",
+                "document_chunk_id",
+                "document_index_set_id",
+                "document_chunk_set_id",
+                "document_version_id",
+                "document_id",
+            ],
+            [
+                "document_chunks.tenant_id",
+                "document_chunks.id",
+                "document_chunks.document_index_set_id",
+                "document_chunks.document_chunk_set_id",
+                "document_chunks.document_version_id",
+                "document_chunks.document_id",
+            ],
+            name="fk_evidences_tenant_chunk_provenance",
+            ondelete="RESTRICT",
         ),
         CheckConstraint(
-            "jsonb_typeof(query_summary) = 'object'",
-            name="query_summary_object",
+            "source_type IN ('database', 'knowledge', 'user_file')",
+            name="source_type_allowed",
         ),
         CheckConstraint(
-            "jsonb_typeof(structured_data) = 'object'",
-            name="structured_data_object",
+            "(source_type = 'database' AND source_name IN "
+            "('synthetic_inventory', 'synthetic_product_catalog')) "
+            "OR (source_type IN ('knowledge', 'user_file') "
+            "AND source_name = 'document_chunk')",
+            name="source_name_matches_type",
         ),
         CheckConstraint(
-            "jsonb_typeof(access_scope) = 'object'",
-            name="access_scope_object",
+            "(agent_run_id IS NULL AND tool_call_id IS NULL) "
+            "OR (agent_run_id IS NOT NULL AND tool_call_id IS NOT NULL)",
+            name="runtime_trace_pair",
+        ),
+        CheckConstraint(
+            "(query_summary IS NULL OR jsonb_typeof(query_summary) = 'object') "
+            "AND (structured_data IS NULL "
+            "OR jsonb_typeof(structured_data) = 'object') "
+            "AND (access_scope IS NULL OR jsonb_typeof(access_scope) = 'object') "
+            "AND (source_locator_json IS NULL "
+            "OR jsonb_typeof(source_locator_json) = 'object')",
+            name="json_shapes",
+        ),
+        CheckConstraint(
+            "citation_ordinal IS NULL OR citation_ordinal BETWEEN 1 AND 12",
+            name="citation_ordinal_range",
+        ),
+        CheckConstraint(
+            "(source_content_sha256 IS NULL "
+            "OR source_content_sha256 ~ '^[0-9a-f]{64}$') "
+            "AND (context_text_sha256 IS NULL "
+            "OR context_text_sha256 ~ '^[0-9a-f]{64}$')",
+            name="hashes_format",
+        ),
+        CheckConstraint(
+            "title = btrim(title) AND char_length(title) BETWEEN 1 AND 300 "
+            "AND char_length(excerpt) BETWEEN 1 AND 1000",
+            name="public_text_lengths",
+        ),
+        CheckConstraint(
+            "(source_type = 'database' "
+            "AND evidence_schema_version = 'm1-database-evidence-v1' "
+            "AND agent_run_id IS NOT NULL AND tool_call_id IS NOT NULL "
+            "AND source_locator IS NOT NULL AND source_locator_json IS NULL "
+            "AND query_summary IS NOT NULL AND structured_data IS NOT NULL "
+            "AND access_scope IS NOT NULL AND trust_level = 'internal_demo' "
+            "AND context_artifact_id IS NULL AND citation_ordinal IS NULL "
+            "AND file_id IS NULL AND document_id IS NULL "
+            "AND document_version_id IS NULL AND document_chunk_set_id IS NULL "
+            "AND document_index_set_id IS NULL AND document_chunk_id IS NULL "
+            "AND source_content_sha256 IS NULL AND context_text_sha256 IS NULL) "
+            "OR (source_type IN ('knowledge', 'user_file') "
+            "AND evidence_schema_version = 'm2-document-evidence-v1' "
+            "AND source_locator IS NULL AND source_locator_json IS NOT NULL "
+            "AND query_summary IS NULL AND structured_data IS NULL "
+            "AND access_scope IS NULL AND trust_level = 'document_snapshot' "
+            "AND context_artifact_id IS NOT NULL "
+            "AND citation_ordinal IS NOT NULL AND file_id IS NOT NULL "
+            "AND document_id IS NOT NULL AND document_version_id IS NOT NULL "
+            "AND document_chunk_set_id IS NOT NULL "
+            "AND document_index_set_id IS NOT NULL "
+            "AND document_chunk_id IS NOT NULL "
+            "AND source_content_sha256 IS NOT NULL "
+            "AND context_text_sha256 IS NOT NULL)",
+            name="source_shape",
         ),
         CheckConstraint(
             "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)",
             name="confidence_range",
         ),
         CheckConstraint("synthetic_data", name="synthetic_data_required"),
+        UniqueConstraint(
+            "tenant_id",
+            "context_artifact_id",
+            "citation_ordinal",
+            name="uq_evidences_context_citation",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "context_artifact_id",
+            "document_chunk_id",
+            name="uq_evidences_context_chunk",
+        ),
         Index("ix_evidences_tenant_run", "tenant_id", "agent_run_id"),
+        Index(
+            "ix_evidences_tenant_context_citation",
+            "tenant_id",
+            "context_artifact_id",
+            "citation_ordinal",
+        ),
+        Index(
+            "ix_evidences_tenant_document_version",
+            "tenant_id",
+            "document_id",
+            "document_version_id",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     tenant_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
-    agent_run_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
-    tool_call_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    agent_run_id: Mapped[UUID | None] = mapped_column(Uuid)
+    tool_call_id: Mapped[UUID | None] = mapped_column(Uuid)
+    evidence_schema_version: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="m1-database-evidence-v1",
+        server_default="m1-database-evidence-v1",
+    )
     source_type: Mapped[str] = mapped_column(String(24), nullable=False)
     source_name: Mapped[str] = mapped_column(String(80), nullable=False)
-    source_locator: Mapped[str] = mapped_column(String(255), nullable=False)
-    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    source_locator: Mapped[str | None] = mapped_column(String(255))
+    source_locator_json: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
     excerpt: Mapped[str] = mapped_column(Text, nullable=False)
-    query_summary: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    structured_data: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    query_summary: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
+    structured_data: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
     observed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -348,7 +563,19 @@ class Evidence(Base):
         default="internal_demo",
         server_default="internal_demo",
     )
-    access_scope: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    access_scope: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
+    context_artifact_id: Mapped[UUID | None] = mapped_column(Uuid)
+    citation_ordinal: Mapped[int | None] = mapped_column(Integer)
+    file_id: Mapped[UUID | None] = mapped_column(Uuid)
+    document_id: Mapped[UUID | None] = mapped_column(Uuid)
+    document_version_id: Mapped[UUID | None] = mapped_column(Uuid)
+    document_chunk_set_id: Mapped[UUID | None] = mapped_column(Uuid)
+    document_index_set_id: Mapped[UUID | None] = mapped_column(Uuid)
+    document_chunk_id: Mapped[UUID | None] = mapped_column(Uuid)
+    source_content_sha256: Mapped[str | None] = mapped_column(String(64))
+    context_text_sha256: Mapped[str | None] = mapped_column(String(64))
     synthetic_data: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -361,4 +588,8 @@ class Evidence(Base):
         server_default=func.now(),
     )
 
-    tool_call: Mapped[ToolCall] = relationship(back_populates="evidences")
+    tool_call: Mapped[ToolCall | None] = relationship(back_populates="evidences")
+    context_artifact: Mapped[ContextArtifact | None] = relationship(
+        back_populates="evidences",
+        viewonly=True,
+    )

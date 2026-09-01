@@ -146,6 +146,29 @@ class EvidencePersistenceError(ApplicationError):
         )
 
 
+class KnowledgeEvidencePersistenceError(ApplicationError):
+    """Document Evidence could not be linked and persisted safely."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "INTERNAL_ERROR",
+            "文档证据保存失败",
+            retryable=True,
+        )
+
+
+class CitationValidationError(ApplicationError):
+    """An answer referenced Evidence outside its current Context allow-list."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "VALIDATION_ERROR",
+            "回答包含无效或不属于当前上下文的证据引用",
+            retryable=False,
+            field="citations",
+        )
+
+
 class InvalidCredentialsError(ApplicationError):
     """An email/password pair did not identify one active M1 user."""
 
@@ -456,6 +479,29 @@ class EmbeddingProviderError(ApplicationError):
         super().__init__(
             "INTERNAL_ERROR",
             "文本向量生成失败，请检查配置或稍后重试",
+            retryable=retryable,
+        )
+
+
+class RerankerInputError(ApplicationError):
+    """Reranker pairs are malformed or outside the bounded provider contract."""
+
+    def __init__(self, *, field: Literal["query", "passages"]) -> None:
+        super().__init__(
+            "VALIDATION_ERROR",
+            "Reranker输入不符合长度或数量限制",
+            retryable=False,
+            field=field,
+        )
+
+
+class RerankerProviderError(ApplicationError):
+    """Reranker scoring failed without exposing text or runtime internals."""
+
+    def __init__(self, *, retryable: bool = False) -> None:
+        super().__init__(
+            "PROVIDER_ERROR",
+            "Reranker评分失败，请检查配置或稍后重试",
             retryable=retryable,
         )
 

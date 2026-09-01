@@ -3,18 +3,18 @@
 > 本文档是项目进度的统一入口，只保存摘要和阶段链接。  
 > 每个阶段的方案、步骤日志和验证结果保存在 `docs/progress/`。  
 > 状态枚举：待确认、待开始、进行中、受阻、已完成。  
-> 最近更新：2026-08-31
+> 最近更新：2026-09-01
 
 ## 1. 当前状态
 
 | 项目 | 当前内容 |
 |---|---|
-| 当前阶段 | M2：知识库垂直切片（M2-16进行中） |
+| 当前阶段 | M2：知识库垂直切片（M2-18已完成，等待M2-19方案确认） |
 | 阶段状态 | 进行中 |
-| 当前步骤 | M2-16.2已完成：文档侧和未来查询侧共享固定jieba中文分词规则，0008允许旧raw与新版FTS Index Set安全共存；尚未实现检索SQL |
-| 已完成到 | M1已完成；M2已完成M2-01至M2-15及M2-16.1至M2-16.2；后端全量`568 passed, 8 skipped`，Alembic为`20260831_0008 (head)`且无迁移漂移，正式Seed为10文件/10文档/10版本/9 ACL并保持0 Chunk Set/0 Index Set/0 Chunk/0 active指针，M1可售库存125 |
-| 下一动作 | 停止并等待用户确认；确认后才可进入M2-16.3共享tenant、ACL、active Version、active Index Set候选边界，不自动实施M2-16.3或后续小步 |
-| 当前阻塞 | 无技术硬阻塞；旧raw FTS Index Set不会被原地改写，未来需用新版Builder重建后再切active；M2-16.2尚无生产Lexical查询，只有迁移测试用参数化SQL验证新版词条可命中；V1尚无进程崩溃后的indexing租约自动回收，图文DOCX 0/2仍为既有边界 |
+| 当前步骤 | M2-18.6已完成并收口M2-18：引用验证Service从模型回答提取严格ASCII `[E#]`，再按当前用户、当前ACL、active代次和未删除状态读取持久化Context/Evidence白名单，拒绝伪造、重复、畸形、越界、跨用户和过期引用 |
+| 已完成到 | M1已完成；M2已完成M2-01至M2-18。引用验证单元/真实PostgreSQL聚焦`18 passed`、Context/Evidence相邻回归`69 passed`、排除显式Smoke和既有跨月用例后`773 passed, 2 skipped, 1 deselected`；全仓Ruff/240文件格式、114个app模块Mypy、编译、依赖和Alembic门禁通过。Alembic仍为`20260901_0009 (head)`且无漂移；正式Seed已恢复为10/10/10/9、0索引/Context/Evidence，Storage仅10 uploads，M1可售125 |
+| 下一动作 | 明确停止，不自动开始M2-19代码。等待用户确认进入M2-19方案讨论；下一阶段才会设计并注册`search_knowledge` Tool。当前没有HTTP知识检索API、Tool、Agent、Qwen回答或前端知识问答 |
+| 当前阻塞 | 无M2-18技术硬阻塞；真实Reranker把Recall@8提高22.22个百分点，但本机CPU对约15候选的精排p50/p95约6.70/7.24秒，不适合未经优化直接作为低延迟同步链路。既有跨月硬编码用例仍是全量唯一失败，本轮未越权修改；人工把部分固定UUID集成文件改成非默认顺序可触发既有数据库夹具顺序耦合，目标用例单跑及默认全量顺序正常。图文DOCX 2/20与事实级Locator 16/20仍是上游边界 |
 
 ## 2. 里程碑总览
 
@@ -22,7 +22,7 @@
 |---|---|---|---|
 | M0 | 产品、技术、数据、评估与协作基线 | 已完成 | [查看M0详细记录](progress/M0_DESIGN.md) |
 | M1 | 库存查询垂直切片 | 已完成 | [查看M1详细记录](progress/M1_INVENTORY_QUERY.md)；M1-01至M1-21全部完成并验证 |
-| M2 | 自建RAG垂直切片 | 进行中 | [查看M2方案与实施记录](progress/M2_KNOWLEDGE_RAG.md)；M2-16.1至M2-16.2已完成，等待确认M2-16.3 |
+| M2 | 自建RAG垂直切片 | 进行中 | [查看M2方案与实施记录](progress/M2_KNOWLEDGE_RAG.md)；M2-16检索闭环、M2-17 Reranker及M2-18 Context/Evidence/引用验证已完成，等待M2-19方案确认 |
 | M3 | 多模态商品分析 | 待开始 | 等待M2完成 |
 | M4 | 深度研究与报告 | 待开始 | 等待M3完成 |
 | M5 | 评估、加固与作品化 | 待开始 | 等待M4完成 |
@@ -77,6 +77,18 @@
 | M2索引代次与active指针 | 新增确定性`document_index_sets`保存Chunk Set、完整Embedding身份、FTS版本、状态、attempt和统计；Version active指针通过tenant/document/version/status复合外键只能指向自己的ready Index Set，Chunk唯一边界按Index Set隔离 |
 | M2检索公开合同 | 请求体只接受去空白后的有界`query`，候选数量只由服务端集中配置；Dense/Lexical单路未命中用`None`表达，所有公开分数拒绝NaN/Infinity，排名为正整数；PDF/DOCX/XLSX/CSV使用类型化公开定位，响应不含tenant、ACL、Storage Key、路径、向量、SQL或原始异常 |
 | M2版本化中文FTS | 文档与查询统一使用`m2-fts-jieba-search-v1`：固定jieba 0.42.1及词典SHA-256、search模式、`HMM=False`、NFKC/casefold和Unicode字母数字过滤；0008允许旧raw与新版Index Set共存，存在新版数据时拒绝静默降级 |
+| M2共享检索候选边界 | Dense与Lexical未来必须从`RetrievalRepository.authorized_active_chunks_statement(CurrentUser)`取得同一份排序前候选；tenant只来自可信CurrentUser，并统一限制未软删除Document/File、active Version、active ready Index Set、Chunk代次归属及owner/company_owner/user/role/market ACL |
+| M2 Dense检索 | `DenseRetrievalService`只用QUERY用途生成一个有界归一化向量；Repository从共享候选边界追加完整Embedding身份、pgvector余弦距离、UUID稳定tie-break和服务端Top K；不兼容身份、Provider故障、数据库超时/不可用均返回类型化安全错误 |
+| M2 Lexical检索 | `LexicalRetrievalService`复用固定Builder生成有界、去重的OR tsquery；Repository从同一共享候选边界追加FTS Builder身份、`@@`命中、`ts_rank_cd(..., 32)`、UUID稳定tie-break和服务端Top K；不查询Embedding，不暴露search_vector或SQL |
+| M2 Hybrid与RRF | `HybridRetrievalService`完整执行Dense与Lexical后按`chunk_id`去重，以`1/(60+rank)`相加融合；保留单路未命中的`None`和两路原始名次/分数，RRF同分按Chunk UUID升序，最终Top K在融合后应用；任一路失败不返回伪Hybrid成功 |
+| M2检索模式路由 | V1当前不新增lexical/dense/hybrid自动路由或大模型路由；先完成默认Hybrid闭环，并在M2-16.7记录真实延迟与质量，再决定是否值得增加路由复杂度；任何未来路由都不得改变tenant、ACL或服务端安全上限 |
+| M2检索验收 | 正式Fake 35 Chunk/20问验证Hybrid文档20/20、证据18/20和确定性20/20；本机同步Hybrid p95约43.29 ms，样本规模不足以支持新增模式路由，继续默认Hybrid并把路由评估后置；真实BGE只做显式离线单文档Smoke |
+| M2 Context公开合同 | `m2-context-bundle-v1`只公开获权文档身份、定位、正文Hash、局部`[E1]`至`[E12]`和预算事实；空证据用`supported=false`与空片段表达，服务端固定4000 Token、12片段、邻居窗口1的初始上限，公开知识Evidence不含tenant、ACL、Storage Key、路径或SQL |
+| M2 Context/Evidence持久化 | `context_artifacts`保存用户、检索快照/配置/内容/幂等Hash与预算；`evidences`以分支CHECK兼容M1 database和M2 knowledge/user_file，并用复合外键绑定完整文档代次。已有Context或文档Evidence时0009降级明确拒绝，不静默丢审计证据 |
+| M2 Context安全重取 | Context不能直接信任Reranker响应中的正文或元数据；Repository用可信`CurrentUser`复用tenant/ACL/active Version/active ready IndexSet/软删除安全门，同时核对Document/Version/IndexSet/Chunk四重身份，再从刚确认的同一ChunkSet与IndexSet取得最多前后各1个邻居。锚点和窗口固定两次批量SQL，不随候选数形成N+1查询 |
+| M2 Context构建 | Context Builder只消费安全重取窗口；按Reranker名次先保锚点再补前后邻居，以Chunk UUID及规范正文Hash去重。文本overlap只有在真实前驱同时入选且前缀/后缀一致时裁剪；表格只移除明确标为`repeated_as_context`的重复行。最终片段按文档自然窗口顺序排列并严格受4000 Token/12片段上限约束；Context、Evidence和内容Hash均确定性生成，但M2-18.4只返回内存产物、不写数据库 |
+| M2 Context/Evidence持久化服务 | Evidence Service不直接相信可构造的`BuiltContext`：先复算快照/配置/内容/身份Hash及UUID，再通过共享安全门按当前`CurrentUser`锁定并重新核对最终Chunk。ContextArtifact与全部Evidence使用确定性ID和PostgreSQL冲突忽略后逐字段验真，在同一嵌套保存点中全部成功或全部回滚；Service只flush、不commit，保留请求事务所有权 |
+| M2引用验证 | 只接受严格ASCII大写`[E1]`至`[E12]`，允许按答案出现顺序引用当前Context白名单的任意子集，但拒绝重复、畸形、大小写/空格/全角变体和越界标签；验证时按当前用户重新检查tenant、Context归属、文档ACL、active Version/Index Set及软删除状态。空Context只允许零引用；支持型Context至少需要一个引用；返回的Evidence ID只来自数据库映射，不信任模型自报 |
 
 ## 5. 当前阻塞与跨阶段问题
 
@@ -149,3 +161,19 @@
 - 2026-08-31：完成M2-16只读盘点、通俗讲解和方案确认；用户两次回复“继续”，确认按“权限前置的Lexical + Dense + Hybrid + RRF检索闭环”实施，但不授权Reranker、RAG、前端、Agent或M2-17。正式Seed已幂等恢复为10文件/10文档/10版本/9 ACL、0 Chunk Set/Index Set/Chunk/Embedding；本轮只记录确认和前置基线，尚未编写检索代码。
 - 2026-08-31：完成M2-16.1；新增统一检索请求、四类来源定位、公开候选/文档/Embedding/FTS身份、Dense/Lexical可选分解、RRF和最终排名合同，以及六类固定脱敏检索错误；补齐query/hybrid集中配置与组合校验。TDD先因模块不存在RED，最终聚焦`83 passed`、后端全量`554 passed, 8 skipped`，全仓Ruff lint、105文件Mypy、编译、依赖及Alembic检查通过；全量测试清空共享Seed后已用既有幂等入口恢复10/10/10/9、0索引数据和M1可售125。未实现分词、迁移、SQL、Repository、Service、API或真实模型加载，停止等待M2-16.2确认。
 - 2026-08-31：完成M2-16.2；新增版本化`m2-fts-jieba-search-v1`共享Builder，固定jieba 0.42.1、词典Hash、search模式、`HMM=False`与文本规范化，索引Mapper改存稳定中文词条；0008允许旧raw和新版Index Set共存并在新版数据存在时拒绝静默降级。迁移往返、active成品切换、真实索引Service写入和参数化FTS命中通过，聚焦`151 passed`、后端全量`568 passed, 8 skipped`，Ruff、110文件Mypy、编译、依赖及Alembic检查通过；正式Seed恢复为10/10/10/9、0索引数据、Storage仅10 uploads和M1可售125。未实现候选Repository或生产检索SQL，停止等待M2-16.3确认。
+- 2026-09-01：完成M2-16.3；新增共享`RetrievalRepository`排序前候选边界，复用现有Document ACL条件，并以可信`CurrentUser`统一限制tenant、未软删除Document/File、active Version、active ready Index Set和Chunk完整代次归属。TDD先因Repository模块不存在RED，最终聚焦`52 passed`；后端全量唯一失败是既有索引Service测试硬编码`2026/08`上传路径在跨月后未删除真实`2026/09`文件，排除该用例后为`572 passed, 6 skipped, 1 deselected`。全仓Ruff/格式、105文件Mypy、编译、依赖、Alembic和差异检查通过；正式Seed恢复为10/10/10/9、0索引数据、Storage仅10 uploads及M1可售125。未实现Embedding查询、Dense/Lexical排序、Top K、Hybrid、RRF、API或真实模型加载，停止等待M2-16.4确认。
+- 2026-09-01：完成M2-16.4；新增`DenseRetrievalService`和Repository Dense扩展，先读取共享获权active身份，再按QUERY用途生成归一化向量，以完整Embedding身份过滤并在真实PostgreSQL用pgvector余弦距离、UUID稳定tie-break和服务端Top K排序；四类来源定位和Provider/数据库安全错误均接入M2-16.1合同。TDD先因Dense模块/Record不存在RED，最终聚焦及相邻边界`100 passed`；后端全量唯一失败仍为既有跨月路径用例，排除后`586 passed, 6 skipped, 1 deselected`。全仓Ruff/206文件格式、106文件Mypy、编译、依赖、Alembic和差异检查通过；正式Seed恢复为10/10/10/9、0索引数据、Storage仅10 uploads及M1可售125。日常测试只用Fake/固定向量，未加载真实BGE；未实现Lexical、Hybrid、RRF、API或后续模块，停止等待M2-16.5确认。
+- 2026-09-01：完成M2-16.5；新增`LexicalRetrievalService`和Repository FTS扩展，query复用固定jieba Builder后生成参数化OR tsquery，只从M2-16.3共享获权active候选中筛选同版Index Set，并以`ts_rank_cd(..., 32)`、UUID稳定tie-break和服务端Top K排序；Dense与Lexical共用四类安全来源定位。TDD首次按预期因Lexical模块/Record不存在而RED，最终相关回归`129 passed`；后端全量唯一失败仍为既有跨月路径用例，排除后`601 passed, 2 skipped, 1 deselected`。Ruff正式范围/210文件格式、108文件Mypy、编译、依赖、Alembic和差异检查通过；正式Seed恢复为10/10/10/9、0索引数据、Storage仅10 uploads及M1可售125。日常测试未加载真实BGE；未实现Hybrid、RRF、检索模式路由、API或后续模块，停止等待M2-16.6确认。
+- 2026-09-01：完成M2-16.6；新增`HybridRetrievalService`，顺序调用现有Dense与Lexical完整安全链，按`chunk_id`去重并以固定`rrf_k=60`融合名次，保留两路原始排名/分数、单路`None`、双路身份和可复算RRF；同分按UUID稳定排序，最终Top K在融合后应用，任何一路失败整体失败，且检测同Chunk事实冲突和同Document跨active代次混合。TDD首次因Hybrid模块不存在RED，最终本步`11 passed`、相关回归`140 passed`；后端全量唯一失败仍为既有跨月路径用例，排除后`612 passed, 2 skipped, 1 deselected`。Ruff/213文件格式、109文件Mypy、编译、依赖、Alembic和差异检查通过；正式Seed恢复为10/10/10/9、0索引数据、Storage仅10 uploads及M1可售125。未实现检索模式路由、Reranker、API或后续模块，停止等待M2-16.7确认。
+- 2026-09-01：完成M2-16.7并收口M2-16；新增可重复的10文档检索验收脚本、Fake门禁判定测试和显式离线BGE检索Smoke。正式Fake链建立35 Chunk/35 Embedding，以20条Golden分别验证Dense、Lexical、Hybrid/RRF：文档命中20/20、18/20、20/20，Hybrid正确证据18/20、安全来源18/20、重复顺序20/20；唯一2条证据缺口仍是已知图文DOCX图片文字。权限/版本/软删除故障矩阵、GIN/HNSW `EXPLAIN`可用性和离线BGE单文档检索通过；本机35 Chunk同步Hybrid p95约43.29 ms，样本不足以支持新增路由，继续默认Hybrid。TDD RED为`3 failed, 48 passed`，GREEN为`51 passed`，相关回归`142 passed`；后端全量唯一失败仍为既有跨月路径用例，排除后`614 passed, 2 skipped, 1 deselected`。Ruff/216文件格式、110文件Mypy、编译、依赖、Alembic和差异检查通过；正式Seed恢复为10/10/10/9、10个parse/index pending、0 active/Chunk Set/Index Set/Chunk/Embedding，Storage仅10 uploads，M1可售125。未实现模式路由、Reranker、RAG、API、Agent或前端，停止等待M2-17方案确认。
+- 2026-09-01：用户确认M2-17方案后完成M2-17.1；固定`BAAI/bge-reranker-v2-m3@953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e`、8192长度与float32默认精度，新增严格Reranker身份、raw/sigmoid分数、原Hybrid rank、连续final rank、top 8响应和脱敏Provider错误；真实后端必须固定身份且local-only。TDD先因常量不存在RED，最终聚焦`60 passed`、相关回归`153 passed`；后端全量唯一失败仍为既有跨月路径用例，排除后`625 passed, 2 skipped, 1 deselected`。Ruff/217文件格式、109文件Mypy、编译、依赖、Alembic和差异检查通过；正式Seed恢复为10/10/10/9、0索引数据、Storage仅10 uploads及M1可售125。未实现Provider/Service或下载模型，停止等待M2-17.2确认。
+- 2026-09-01：完成M2-17.2；新增硬件无关`RerankerProvider`协议、不可变身份/逐对分数/批次合同、SHA-256问题—正文—原位置绑定键、数量/顺序/身份/有限raw与sigmoid一致性校验，以及完全离线的确定性Fake。TDD先因`RerankerInputError`不存在RED，最终Provider/合同聚焦`93 passed`、相关检索回归`205 passed`；后端全量唯一失败仍为既有跨月路径用例，排除显式Smoke及该用例后`658 passed, 2 skipped, 1 deselected`。Ruff/219文件格式、110文件Mypy、编译、依赖、Alembic和差异检查通过；正式Seed恢复为10/10/10/9、10个parse/index pending、0 active/Chunk Set/Index Set/Chunk/Embedding，Storage仅10 uploads及M1可售125。未实现Reranker Service、真实BGE后端、模型加载/下载或M2-17.3，停止等待确认。
+- 2026-09-01：完成M2-17.3；新增`RerankerRetrievalService`，候选只能由注入的可信Hybrid Service按`CurrentUser`生成，Provider只接收query和有序正文并返回分数。Service重验Hybrid结构及单active代次、Provider身份/数量/顺序/pair key，给全部候选评分后按分数、原Hybrid rank、Chunk UUID稳定排序并截取top 8，逐字段保留Chunk身份、正文、来源及Dense/Lexical/RRF事实；空候选不调用Provider，失败映射固定安全错误。TDD先因Service模块不存在RED，本步`64 passed`、合同/Provider/Service`108 passed`、相关回归`220 passed`；真实PostgreSQL集成继续证明无ACL Chunk不会进入精排结果。后端全量唯一失败仍为既有跨月路径用例，排除显式Smoke及该用例后`673 passed, 2 skipped, 1 deselected`。Ruff/222文件格式、111文件Mypy、编译、依赖、Alembic和差异检查通过；正式Seed恢复为10/10/10/9、0索引数据、Storage仅10 uploads及M1可售125。未实现或下载真实BGE、HTTP API、RAG或M2-17.4，停止等待单独确认。
+- 2026-09-01：完成M2-17.4；新增固定本地`BgeRerankerProvider`、六文件SHA-256 snapshot manifest、显式下载器、匿名可比资源基准和中英/SKU真实Smoke。用户授权后下载并验证`BAAI/bge-reranker-v2-m3@953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e`共2,293,242,108字节运行文件；真实Smoke在离线变量和不可用代理下`3 passed`。本机CPU基准加载7.038秒、6对候选五轮p50/p95为0.545/0.671秒、RSS峰值2055.1 MiB且三组正负对排序全通过。TDD先因真实Provider常量/类不存在RED，最终聚焦`139 passed, 3 skipped`；后端全量唯一失败仍为既有跨月用例，排除后`704 passed, 2 skipped, 1 deselected`。Ruff/227文件格式、116文件Mypy、编译、依赖、Alembic和差异检查通过；正式Seed恢复为10/10/10/9、0索引数据、Storage仅10 uploads及M1可售125。未运行正式10文档RRF/Reranker质量对比，明确没有开始M2-17.5、RAG、API、Agent、前端或模式路由。
+- 2026-09-01：完成M2-17.5并收口M2-17；新增固定20题/18题计分的真实离线质量验收器，逐题保存RRF与Reranker证据排名并严格排除两条上游图文DOCX图片文字。正式Fake索引仍为10 ready/35 Chunk/35 Embedding；RRF Recall@8/MRR@8为`0.777778/0.318056`，真实BGE-Reranker为`1.0/0.898148`，4条RRF top8漏项全部被精排拉回。质量提升同时伴随本机CPU p50/p95约`6.70/7.24秒`和RSS峰值2793.2 MiB，后续需评估候选裁剪/GPU/路由而非直接宣称低延迟可用。TDD先因验收模块不存在为`4 failed, 48 passed`，最终M2-17聚焦`142 passed, 3 skipped`；后端全量唯一失败仍为既有跨月用例，排除后`707 passed, 2 skipped, 1 deselected`。Ruff/229文件格式、114文件Mypy、编译、依赖、Alembic和差异检查通过；2,034,237,440字节失败下载分片已清理且快照复验通过，正式Seed恢复为10/10/10/9、0索引数据、Storage仅10 uploads、M1可售125。没有开始M2-18、RAG回答、API、Agent、前端或模式路由。
+- 2026-09-01：完成M2-18.1；新增版本化Context Bundle、文档Evidence和成功引用映射契约，固定空证据状态、`[E1]`至`[E12]`、去重后身份唯一性、预算一致性、服务端4000 Token/12片段/邻居窗口1及安全错误。TDD先因错误类型缺失在收集期RED，最终新增`13 passed`、相邻契约`82 passed`、全部单元`573 passed`；Ruff、格式、112个app模块Mypy、编译、依赖及Alembic检查通过，仍为`20260831_0008 (head)`且无迁移漂移。本步没有Context算法、数据库迁移、Evidence落库、引用解析、API、Tool、Agent、Qwen或前端，停止等待M2-18.2确认。
+- 2026-09-01：完成M2-18.2；新增`ContextArtifact` ORM和`20260901_0009`迁移，扩展Evidence为database/knowledge/user_file三分支，复合外键锁定Context、File、Document、Version、ChunkSet、IndexSet和Chunk，唯一约束固定每次Context的`[E#]`及Chunk不重复；旧M1写入依靠默认schema version保持兼容，文档数据存在时降级明确拒绝。TDD先因`ContextArtifact`不存在RED，最终迁移聚焦`4 passed`、相邻回归`50 passed`、后端Fake门禁`724 passed, 2 skipped, 1 deselected`；Ruff/233文件格式、112模块Mypy、编译、依赖、Alembic和差异检查通过。正式Seed恢复为10/10/10/9、0索引/Context/Evidence、Storage仅10 uploads及M1可售125；没有实现M2-18.3 Repository、Context算法、Evidence Service、引用解析或后续模块。
+- 2026-09-01：完成M2-18.3；扩展共享`RetrievalRepository`，以可信`CurrentUser`和既有tenant/ACL/active Version/active ready IndexSet/软删除安全门重新取得Reranker锚点，同时核对Document/Version/IndexSet/Chunk四重身份、正文与文档元数据；邻居只允许来自同一Document/Version/ChunkSet/IndexSet的`chunk_index ± 1`。先批量重取锚点，再用可信结果批量重取窗口并二次复核锚点，固定两次SQL避免N+1。TDD先因安全重取异常不存在RED，最终真实PostgreSQL聚焦`11 passed`、相邻回归`126 passed`、Fake门禁`735 passed, 2 skipped, 1 deselected`；全仓Ruff/234文件格式、112模块Mypy、编译、依赖和Alembic检查通过，仍为`20260901_0009 (head)`且无漂移。正式Seed恢复为10/10/10/9、0索引/Context/Evidence、Storage仅10 uploads及M1可售125；没有实现Context去重/overlap/Token预算、Evidence Service、引用解析或后续模块，停止等待M2-18.4确认。
+- 2026-09-01：完成M2-18.4；新增确定性`ContextBuilderService`，把安全重取的锚点/邻居按“锚点优先、邻居补充”选入预算，执行Chunk与规范正文去重、文本/表格可信overlap裁剪、精确Token与片段上限、自然窗口顺序和公开来源映射，并生成稳定Context/Evidence UUID与检索/配置/内容/幂等Hash；本步只返回内存`BuiltContext`，不写数据库。TDD先因Context模块不存在RED；最终单元`13 passed`、Builder加真实PostgreSQL集成`25 passed`、相邻回归`159 passed`、Fake门禁`749 passed, 2 skipped, 1 deselected`；全仓Ruff/236文件格式、113模块Mypy、编译、依赖、Alembic和Seed复核通过。原样全量唯一失败仍是既有跨月上传Key硬编码用例，本步未越权修改；停止等待M2-18.5确认。
+- 2026-09-01：完成M2-18.5；扩展`EvidenceService`和新增`KnowledgeEvidenceRepository`，保存前复算Builder产物身份并按当前用户重新获权/锁定最终Chunk，以PostgreSQL确定性冲突忽略加逐字段复核实现ContextArtifact和全部文档Evidence幂等写入；嵌套保存点保证任一Evidence失败时Context也回滚，空证据仍保存零片段审计Artifact，M1 database Evidence未改。TDD先因Repository不存在RED；最终真实PostgreSQL`6 passed`、M1/M2 Evidence与Context相邻`35 passed`、Fake门禁`755 passed, 2 skipped, 1 deselected`；全仓Ruff/237文件格式、113模块Mypy、编译、依赖、Alembic及Seed复核通过。原样全量唯一失败仍是既有跨月用例；停止等待M2-18.6确认。
+- 2026-09-01：完成M2-18.6并收口M2-18；新增`CitationValidatorService`和当前授权Citation Context读取，只接受严格ASCII `[E1]`至`[E12]`并按答案出现顺序返回数据库控制的Evidence ID，拒绝无引用支持型答案、重复/畸形/越界标签、跨用户Context、ACL撤销、软删除和旧代次。TDD先因Citation模块与Repository记录不存在RED，最终单元/真实PostgreSQL`18 passed`、相邻回归`69 passed`；原样全量`773 passed, 10 skipped, 1 failed`的唯一失败仍是既有跨月用例，排除后`773 passed, 2 skipped, 1 deselected`。Ruff/240文件格式、114模块Mypy、编译、依赖、Alembic与Seed复核通过；本步没有API、Tool、Agent、Qwen、回答语义判定或前端，停止等待M2-19方案确认。

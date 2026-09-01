@@ -39,6 +39,17 @@ class RetrievalEmbeddingIdentityMismatchError(ApplicationError):
         )
 
 
+class RetrievalRerankerProviderUnavailableError(ApplicationError):
+    """The configured Reranker provider is temporarily unavailable."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "PROVIDER_ERROR",
+            "检索精排服务暂时不可用，请稍后重试",
+            retryable=True,
+        )
+
+
 class RetrievalDatabaseUnavailableError(ApplicationError):
     """PostgreSQL could not accept the bounded retrieval read."""
 
@@ -68,5 +79,39 @@ class RetrievalInternalError(ApplicationError):
         super().__init__(
             "INTERNAL_ERROR",
             "检索暂时无法完成，请稍后重试",
+            retryable=True,
+        )
+
+
+class ContextInputError(ApplicationError):
+    """Reranked input cannot safely enter the Context Builder."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "VALIDATION_ERROR",
+            "上下文输入不符合格式或来源限制",
+            retryable=False,
+            field="context",
+        )
+
+
+class ContextDataContractError(ApplicationError):
+    """Trusted Chunk facts cannot form a valid public Context contract."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "INTERNAL_ERROR",
+            "文档片段无法形成安全的上下文",
+            retryable=False,
+        )
+
+
+class ContextBuildError(ApplicationError):
+    """An unexpected Context Builder failure safe for future adapters."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "INTERNAL_ERROR",
+            "上下文暂时无法构建，请稍后重试",
             retryable=True,
         )
