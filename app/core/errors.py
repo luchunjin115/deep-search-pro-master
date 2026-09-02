@@ -565,6 +565,29 @@ class FileStorageError(ApplicationError):
         )
 
 
+class FileReadLocatorError(ApplicationError):
+    """A bounded public locator does not exist in the authorized artifact."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "VALIDATION_ERROR",
+            "文件读取位置与已解析内容不匹配",
+            retryable=False,
+            field="locator",
+        )
+
+
+class FileReadError(ApplicationError):
+    """A parsed file artifact could not be loaded or validated safely."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "INTERNAL_ERROR",
+            "文件解析内容读取失败，请稍后重试",
+            retryable=True,
+        )
+
+
 class KnowledgePersistenceError(ApplicationError):
     """Knowledge metadata could not be read or persisted safely."""
 

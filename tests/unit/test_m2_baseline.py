@@ -23,6 +23,7 @@ M2_ENVIRONMENT_VARIABLES = (
     "UPLOAD_MAX_FILE_SIZE_BYTES",
     "UPLOAD_MAX_FILES_PER_REQUEST",
     "UPLOAD_STREAM_CHUNK_SIZE_BYTES",
+    "FILE_READ_MAX_ARTIFACT_BYTES",
     "PDF_MAX_PAGES",
     "PDF_MAX_EXTRACTED_CHARACTERS",
     "PDF_LOW_TEXT_CHARACTER_THRESHOLD",
@@ -114,6 +115,7 @@ def test_m2_settings_use_safe_local_defaults() -> None:
         ".csv",
     }
     assert settings.upload_max_file_size_bytes == 25 * 1024 * 1024
+    assert settings.file_read_max_artifact_bytes == 100 * 1024 * 1024
     assert settings.pdf_max_pages == 500
     assert settings.pdf_max_extracted_characters == 5_000_000
     assert settings.pdf_low_text_character_threshold == 20

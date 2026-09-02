@@ -19,6 +19,7 @@ from app.models.runtime import (
     Message,
     Thread,
     ToolCall,
+    ToolContextLink,
 )
 
 __all__ = [
@@ -41,6 +42,7 @@ __all__ = [
     "Tenant",
     "Thread",
     "ToolCall",
+    "ToolContextLink",
     "User",
     "UserRole",
     "Warehouse",

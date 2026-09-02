@@ -109,6 +109,11 @@ class Settings(BaseSettings):
         ge=64 * 1024,
         le=4 * 1024 * 1024,
     )
+    file_read_max_artifact_bytes: int = Field(
+        default=100 * 1024 * 1024,
+        ge=1 * 1024 * 1024,
+        le=400 * 1024 * 1024,
+    )
 
     # M2-07文本型PDF解析保护；不启用OCR或页面渲染识别。
     pdf_max_pages: int = Field(default=500, ge=1, le=2000)

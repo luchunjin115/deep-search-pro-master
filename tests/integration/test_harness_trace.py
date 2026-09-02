@@ -197,6 +197,10 @@ def test_success_trace_records_model_tool_permission_and_duration(
         )
         assert result.data["available"] == 125
         assert result.context.agent_run_id == run.id
+        assert result.context.user_id == fixture.context.user_id
+        assert result.context.tenant_id == fixture.context.tenant_id
+        assert result.context.roles == fixture.context.roles
+        assert result.context.market_scopes == fixture.context.market_scopes
 
     run_row, calls = load_trace(fixture)
     assert run_row.status == "completed"

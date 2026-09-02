@@ -23,7 +23,12 @@ from app.core.errors import (
 from app.models.runtime import AgentRun, ToolCall
 from app.runtime.context import RunContext
 
-RunRoute = Literal["inventory_query", "product_spec", "unsupported"]
+RunRoute = Literal[
+    "inventory_query",
+    "product_spec",
+    "knowledge_query",
+    "unsupported",
+]
 RunStatus = Literal["completed", "failed", "denied", "timed_out"]
 ToolStatus = Literal["success", "error", "denied", "timeout"]
 PermissionResult = Literal["allowed", "denied"]

@@ -24,7 +24,7 @@ from app.runtime.trace import (
     TraceRecorder,
     arguments_from_input,
 )
-from app.schemas.common import MarketCode
+from app.schemas.common import MarketCode, RoleName
 from app.tools.registry import ToolDefinition, ToolNotRegisteredError, ToolRegistry
 
 ResultT = TypeVar("ResultT")
@@ -35,6 +35,9 @@ class ToolExecutionContext:
     """Committed audit identifiers available to an allowed business callback."""
 
     tenant_id: UUID
+    user_id: UUID
+    roles: tuple[RoleName, ...]
+    market_scopes: tuple[MarketCode, ...]
     agent_run_id: UUID
     tool_call_id: UUID
     trace_id: UUID
@@ -154,6 +157,9 @@ class HarnessExecutor:
         )
         execution_context = ToolExecutionContext(
             tenant_id=self._context.tenant_id,
+            user_id=self._context.user_id,
+            roles=self._context.roles,
+            market_scopes=self._context.market_scopes,
             agent_run_id=self._run.id,
             tool_call_id=tool_trace.id,
             trace_id=self._context.trace_id,

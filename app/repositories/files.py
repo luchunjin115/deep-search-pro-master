@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
@@ -11,6 +12,23 @@ from sqlalchemy.orm import Session
 from app.models.knowledge import Document, DocumentVersion, StoredFile
 from app.repositories.common import apply_statement_timeout
 from app.repositories.documents import document_access_clause
+
+
+@dataclass(frozen=True, slots=True)
+class ReadableParsedFile:
+    """Authorized file/version facts; the private key stays inside services."""
+
+    file_id: UUID
+    document_id: UUID
+    version_id: UUID
+    version_no: int
+    original_name: str
+    extension: str
+    sha256: str
+    content_hash: str
+    parse_status: str
+    parsed_storage_key: str | None
+    is_active_version: bool
 
 
 class FileRepository:
@@ -166,6 +184,77 @@ class FileRepository:
                 StoredFile.deleted_at.is_(None),
                 or_(*access),
             )
+        )
+
+    def find_readable_parsed_file(
+        self,
+        *,
+        tenant_id: UUID,
+        user_id: UUID,
+        role_names: tuple[str, ...],
+        market_scopes: tuple[str, ...],
+        file_id: UUID,
+    ) -> ReadableParsedFile | None:
+        """Fetch one linked version and authorize its document in the same query."""
+
+        apply_statement_timeout(self._session, self._statement_timeout_ms)
+        row = self._session.execute(
+            select(
+                StoredFile.id,
+                Document.id,
+                DocumentVersion.id,
+                DocumentVersion.version_no,
+                StoredFile.original_name,
+                StoredFile.extension,
+                StoredFile.sha256,
+                DocumentVersion.content_hash,
+                DocumentVersion.parse_status,
+                DocumentVersion.parsed_storage_key,
+                Document.active_version_id,
+            )
+            .join(
+                DocumentVersion,
+                and_(
+                    DocumentVersion.tenant_id == StoredFile.tenant_id,
+                    DocumentVersion.file_id == StoredFile.id,
+                ),
+            )
+            .join(
+                Document,
+                and_(
+                    Document.tenant_id == DocumentVersion.tenant_id,
+                    Document.id == DocumentVersion.document_id,
+                ),
+            )
+            .where(
+                StoredFile.id == file_id,
+                StoredFile.tenant_id == tenant_id,
+                StoredFile.status != "soft_deleted",
+                StoredFile.deleted_at.is_(None),
+                Document.deleted_at.is_(None),
+                document_access_clause(
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    role_names=role_names,
+                    market_scopes=market_scopes,
+                    company_owner="company_owner" in role_names,
+                ),
+            )
+        ).one_or_none()
+        if row is None:
+            return None
+        return ReadableParsedFile(
+            file_id=row[0],
+            document_id=row[1],
+            version_id=row[2],
+            version_no=row[3],
+            original_name=row[4],
+            extension=row[5],
+            sha256=row[6],
+            content_hash=row[7],
+            parse_status=row[8],
+            parsed_storage_key=row[9],
+            is_active_version=row[10] == row[2],
         )
 
     def list_accessible(

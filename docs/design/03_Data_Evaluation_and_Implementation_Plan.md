@@ -5,6 +5,8 @@
 > 数据性质：全部业务数据为演示合成数据，不代表真实Amazon经营结果  
 > 实施原则：先完成可演示的垂直链路，再扩展覆盖面
 
+> 后续已记录但尚未实施的“公开商品字段 + 合成运营字段”扩充与跨电脑恢复方案，见 [04_Public_Dataset_Expansion_and_Migration_Plan.md](04_Public_Dataset_Expansion_and_Migration_Plan.md)。在该方案完成正式确认和验证前，本文件的现有合成数据基线继续有效。
+
 ## 1. 文档目的
 
 本文档确定：

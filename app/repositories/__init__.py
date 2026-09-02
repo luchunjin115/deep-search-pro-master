@@ -5,9 +5,10 @@ from app.repositories.document_indexes import DocumentIndexRepository
 from app.repositories.documents import DocumentRepository
 from app.repositories.evidence import (
     AuthorizedCitationContext,
+    AuthorizedDocumentEvidence,
     KnowledgeEvidenceRepository,
 )
-from app.repositories.files import FileRepository
+from app.repositories.files import FileRepository, ReadableParsedFile
 from app.repositories.identity import IdentityRecord, IdentityRepository
 from app.repositories.inventory import InventoryRecord, InventoryRepository
 from app.repositories.product import (
@@ -26,6 +27,7 @@ from app.repositories.retrieval import (
 
 __all__ = [
     "AuthorizedCitationContext",
+    "AuthorizedDocumentEvidence",
     "ContextChunkRecord",
     "ContextChunkRehydrationError",
     "ContextChunkWindowRecord",
@@ -42,6 +44,7 @@ __all__ = [
     "ProductCandidate",
     "ProductRepository",
     "ProductSpecRecord",
+    "ReadableParsedFile",
     "RetrievalRepository",
     "apply_statement_timeout",
 ]

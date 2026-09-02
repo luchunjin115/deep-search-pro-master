@@ -2,20 +2,20 @@
 
 > 本文件是 M2 的唯一必读入口，只保存当前状态、关键决策、步骤索引、风险和下一动作。
 > 完整方案、实施日志和验证证据保存在 [`records/`](records/) 中，开始具体任务时按需读取。
-> 最近更新：2026-09-01
+> 最近更新：2026-09-02
 
 ## 1. 当前状态
 
 | 项目 | 当前内容 |
 |---|---|
 | 阶段状态 | 进行中 |
-| 已完成 | M2-01 至 M2-18 |
-| 当前停止点 | M2-18 已完成并收口 |
-| 下一动作 | 等待用户确认进入 M2-19 方案讨论 |
-| 尚未开始 | `search_knowledge` Tool、知识问答 HTTP API、知识 Agent/LangGraph、Qwen 基于证据回答、前端知识问答 |
+| 已完成 | M2-01 至 M2-20；文件与Evidence受控读取两条Tool链已完成整链矩阵并收口 |
+| 当前停止点 | M2-20整体已完成；M2-21需求讨论与待确认实施方案已记录，最终正式方案尚未确认 |
+| 下一动作 | 复核M2-21待确认实施方案的十项关键取舍；最终确认前不编码，确认后也只开始M2-21.1 |
+| 尚未开始 | M2-21至M2-24、知识问答 HTTP API、知识 Agent/LangGraph、Qwen 基于证据回答、前端知识问答 |
 | 技术阻塞 | 无硬阻塞；存在性能和上游质量边界，见第 7 节 |
 
-用户尚未确认 M2-19 方案，因此不得自动开始 M2-19 代码。确认 M2-19 也不自动授权后续步骤。
+M2-20.1至M2-20.6已经全部完成并验证。M2-21已有需求讨论和待确认实施方案，但尚未得到最终确认，不得自动开始代码开发。
 
 ## 2. 新窗口阅读顺序
 
@@ -42,6 +42,10 @@
 | [M2_16_RETRIEVAL.md](records/M2_16_RETRIEVAL.md) | 权限前置候选、Dense、Lexical、Hybrid、RRF、质量与延迟验收 | 修改召回、ACL过滤、排序或检索参数时 |
 | [M2_17_RERANKER.md](records/M2_17_RERANKER.md) | Reranker合同、Fake、BGE Provider、Service、质量和资源基准 | 修改精排模型、候选裁剪或精排策略时 |
 | [M2_18_CONTEXT_EVIDENCE.md](records/M2_18_CONTEXT_EVIDENCE.md) | Context合同、持久化、安全重取、Builder、Evidence和引用验证 | 讨论或实现 M2-19 Tool，以及修改引用链时 |
+| [M2_19_SEARCH_KNOWLEDGE_TOOL.md](records/M2_19_SEARCH_KNOWLEDGE_TOOL.md) | `search_knowledge` Tool完整方案、合同、审计关联、五步实施顺序、验证矩阵和风险 | 确认或实施M2-19时 |
+| [M2_20_FILE_EVIDENCE_TOOLS.md](records/M2_20_FILE_EVIDENCE_TOOLS.md) | `read_uploaded_file/get_evidence_detail`完整方案、用户确认、严格合同、实施日志和验证矩阵 | 确认或实施M2-20时 |
+| [M2_21_ENGINEERED_AGENT.md](records/M2_21_ENGINEERED_AGENT.md) | 工程化Agent需求讨论、方向性共识、候选运行模型、未决问题和非正式步骤草案 | 继续讨论或形成M2-21最终正式方案时 |
+| [M2_21_ENGINEERED_AGENT_IMPLEMENTATION_PLAN.md](records/M2_21_ENGINEERED_AGENT_IMPLEMENTATION_PLAN.md) | 基于当前方向形成的待确认实施方案、十步顺序、文件、验证、完成标准和风险 | 复核、修改或最终确认M2-21实施方案时 |
 
 这些文件是正式阶段记录，不是可删除的临时归档。入口只做导航和当前状态摘要，完整完成证据仍以对应过程记录为准。
 
@@ -59,7 +63,7 @@ M2 继续复用 M1 的登录、`CurrentUser`、事务、Harness、Trace、聊天
 - V1 文件仍使用本地文件系统和 `Storage` 抽象，不部署 MinIO；
 - 不允许模型直接访问数据库或绕过 Tool/Harness 权限；
 - 不把扫描件、复杂供应商文件、百万 Chunk、高并发或灾难恢复描述为已解决；
-- 在 M2-19 方案确认前，不注册 Tool 或扩展 Agent。
+- M2-21及后续步骤未经用户完成方案确认，不新增执行Tool或扩展Agent。
 
 ## 5. 当前已实现调用链
 
@@ -73,20 +77,45 @@ M2 继续复用 M1 的登录、`CurrentUser`、事务、Harness、Trace、聊天
 → 结构感知 Chunk Artifact
 → BGE-M3 Embedding + FTS + pgvector
 → active ready Index Set
+→ KnowledgeSearchService固定应用编排
+→ M2 Tool Registry + Harness权限/预算/Trace
+→ SearchKnowledgeTool可信身份绑定
 → 权限前置 Dense / Lexical
 → Hybrid + RRF
 → BGE-Reranker
 → Context Builder
-→ ContextArtifact + Document Evidence
+→ ContextArtifact + Document Evidence + ToolContextLink审计关联
 → Citation Validator
 ```
 
-尚未接通的后半段：
+M2-20.3已把安全文件读取接入正式Tool执行链：
 
 ```text
-Citation Validator 之前的既有能力
-→ search_knowledge Tool（M2-19，未开始）
-→ 知识路由与 LangGraph（M2-21，未开始）
+ReadUploadedFileInput + CurrentUser
+→ M2 Registry → Harness权限/预算/超时/Trace
+→ ReadUploadedFileTool可信身份与file ID验真
+→ FileReadingService
+→ 一次性File/Version/Document获权查询 → PostgreSQL
+→ 私有parsed_storage_key → LocalStorage
+→ RoutedParseResult重新校验 → selected Canonical Artifact
+→ 四格式locator选择与8000字符裁剪
+→ ReadUploadedFileResult → ToolEnvelope（空evidence_ids）
+```
+
+M2-20.5已把统一Evidence详情接入正式Tool执行链：
+
+```text
+GetEvidenceDetailInput + CurrentUser
+→ M2 Registry → Harness权限/预算/超时/Trace
+→ GetEvidenceDetailTool可信身份与Evidence ID验真
+→ EvidenceQueryService → EvidenceRepository → PostgreSQL
+→ GetEvidenceDetailResult → ToolEnvelope（单个已验证evidence_id）
+```
+
+M2-20以后尚未接通的后半段：
+
+```text
+知识路由与 LangGraph（M2-21，未开始）
 → Qwen 基于 Evidence 的回答（未开始）
 → HTTP 聊天链和前端引用展示（未开始）
 ```
@@ -113,9 +142,9 @@ Citation Validator 之前的既有能力
 | M2-16 | 已完成 | 权限前置 Dense/Lexical/Hybrid/RRF 检索闭环 | [检索记录](records/M2_16_RETRIEVAL.md) |
 | M2-17 | 已完成 | BGE-Reranker Provider、Service 和质量验收 | [重排记录](records/M2_17_RERANKER.md) |
 | M2-18 | 已完成 | Context、Evidence、原子持久化与严格引用验证 | [Context记录](records/M2_18_CONTEXT_EVIDENCE.md) |
-| M2-19 | 待确认 | 设计并注册 `search_knowledge` Tool | 尚未创建方案记录 |
-| M2-20 | 待开始 | `read_uploaded_file` 与 `get_evidence_detail` Tool | [原始计划](records/M2_00_STAGE_PLAN.md) |
-| M2-21 | 待开始 | 有界知识路由、LangGraph 和基于 Evidence 的回答 | [原始计划](records/M2_00_STAGE_PLAN.md) |
+| M2-19 | 已完成 | 严格合同、隔离Registry、审计关联、应用Service、正式Tool/Harness及权限/故障矩阵完成 | [M2-19记录](records/M2_19_SEARCH_KNOWLEDGE_TOOL.md) |
+| M2-20 | 已完成 | 两个受控读取Tool的合同、Service、Harness接入及真实权限/范围/故障矩阵完成 | [M2-20记录](records/M2_20_FILE_EVIDENCE_TOOLS.md) |
+| M2-21 | 待开始 | 工程化Agent需求讨论与待确认实施方案已记录；尚未授权开发 | [待确认方案](records/M2_21_ENGINEERED_AGENT_IMPLEMENTATION_PLAN.md) / [讨论草案](records/M2_21_ENGINEERED_AGENT.md) / [原始计划](records/M2_00_STAGE_PLAN.md) |
 | M2-22 | 待开始 | 最小 RAG 评估集和 Runner | [原始计划](records/M2_00_STAGE_PLAN.md) |
 | M2-23 | 待开始 | 最小前端上传、知识问答和引用展示 | [原始计划](records/M2_00_STAGE_PLAN.md) |
 | M2-24 | 待开始 | 故障矩阵、真实演示、Chromium 回归和阶段收口 | [原始计划](records/M2_00_STAGE_PLAN.md) |
@@ -133,7 +162,17 @@ Citation Validator 之前的既有能力
 - Reranker 只能重排已经获权的 Hybrid 候选，不能扩大召回或绕过 ACL；
 - Context Builder 不信任 Reranker 返回的正文，必须重新获权并从数据库取得同代次锚点和邻居；
 - Context/Evidence 使用确定性身份和事务内原子幂等保存；引用验证必须重新检查当前用户、ACL、软删除和 active 代次；
+- Document Evidence保持可复用且不永久占有ToolCall；`tool_context_links`保证一ToolCall最多一个Context、同一Context可被多ToolCall审计复用，M1 database Evidence继续直接绑定ToolCall；
+- `KnowledgeSearchService`固定执行Reranker（内部Hybrid）→ Context Builder → Evidence持久化，并在返回前逐项核对Context/Evidence；不拥有模型参数、预算、ACL或事务提交；
 - 所有日常回归默认使用 Fake；真实 BGE/Docling/Qwen 只通过显式 Smoke 或质量验收运行。
+- `search_knowledge`输入只允许1至2000字符query，输出只包装公开`ContextBundle`；ToolEnvelope最多12个Evidence；
+- M1 Registry继续精确两个Tool，M2隔离Registry累计五个Tool；新增读取Tool元数据不会自动进入现有库存Agent或Provider投影。
+- `SearchKnowledgeTool`通过Harness执行并逐项核对RunContext与绑定CurrentUser；ToolCall读取使用`FOR KEY SHARE`避免与Harness状态回写互锁，同时继续由复合外键和唯一约束验真。
+- `read_uploaded_file`输入只允许公开file ID与可选四格式有界locator；PDF最多3页、表格最多50行/1000单元格、输出最多8000字符，调用者不能传路径、Storage Key、身份、SQL或读取预算。
+- 文件读取Service只接受可信`CurrentUser`与严格输入；Repository在同一SQL中限制tenant、File/Document软删除及owner/ACL，Service只读`parse_status=ready`版本，私有Key必须匹配tenant/`parsed`/version，Routed Artifact、格式及File/Version双重源Hash必须一致；具体获权版本可非active但结果必须如实标记。
+- `ReadUploadedFileTool`精确绑定M2 Registry，通过Harness执行并核对绑定`CurrentUser`与运行上下文的用户、tenant、角色和市场；Service结果类型与公开file ID必须和请求一致，成功Envelope不创建或伪造Evidence。
+- M1 `EvidenceQueryService.get_detail`继续只服务数据库Evidence与既有HTTP合同；M2统一`get_tool_detail`可返回数据库或文档详情，文档分支必须重新核对Context请求者、当前ACL/软删除/active代次和完整Chunk来源，失败统一隐藏为`EVIDENCE_NOT_FOUND`。
+- `get_evidence_detail`输入只允许Evidence ID，统一输出M1数据库或M2文档Evidence安全详情；正式Tool精确绑定可信身份并经过Harness，Service结果ID必须与请求一致，成功Envelope只携带该Evidence ID。
 
 ### 7.2 当前风险与边界
 
@@ -148,22 +187,21 @@ Citation Validator 之前的既有能力
 
 ## 8. 最近验证基线
 
-M2-18.6 收口时的实际结果：
+M2-20.6 收口时的实际结果：
 
-- 引用验证单元和真实 PostgreSQL 聚焦：`18 passed`；
-- Context/Evidence 相邻回归：`69 passed`；
-- 排除显式真实模型 Smoke 和既有跨月用例后：`773 passed, 2 skipped, 1 deselected`；
-- 原样默认全量：`773 passed, 10 skipped, 1 failed`，唯一失败是既有跨月测试；
-- Ruff、240 文件格式检查、114 个 `app` 模块 Mypy、编译、依赖和 Alembic 门禁通过；
-- Alembic 为 `20260901_0009 (head)` 且无漂移；
-- 正式 Seed 已恢复为 10 files / 10 documents / 10 versions / 9 ACL，索引、Context 和 Evidence 均为 0；
-- Storage 只有 10 个 uploads，M1 德国仓可售库存仍为 125。
+- M2-20聚焦合同、Service、Tool与真实矩阵：`93 passed`；M1/M2相邻回归：`233 passed`；
+- 排除既有跨月用例后：`949 passed, 2 skipped, 1 deselected`；
+- 原样默认全量：`949 passed, 10 skipped, 1 failed`，唯一失败仍是既有跨月测试；
+- Ruff、253文件格式、120个`app`源文件Mypy、编译、依赖和Alembic门禁通过；
+- Alembic继续为`20260902_0010 (head)`且无漂移，本步没有新增迁移；
+- 正式Seed已恢复为10 files / 10 documents / 10 versions / 9 ACL，索引、Context、Evidence、ToolContextLink、AgentRun和ToolCall均为0；
+- Storage只有10个uploads，M1德国仓可售库存仍为125。
 
-这些结果能证明 M2-01 至 M2-18 的确定性测试、当前 PostgreSQL 集成和既有 M1 基线在记录时可重复；不能证明生产规模、长期模型稳定性、真实供应商复杂文档覆盖率、低延迟 Reranker 或尚未实现的 Tool/Agent/前端链路。
+这些结果能证明两个读取Tool在三业务角色、owner/company owner/user/role/market ACL下通过同一真实Harness落到真实Service/Repository，撤权、软删除、旧active来源、解析/locator、Storage/Artifact和数据库故障均被安全处理并记录Trace；不能证明M2-21三跳Agent策略、真实Qwen/BGE延迟、HTTP知识API或前端。
 
 ## 9. 下一步和记录规则
 
-下一步只能先提交 M2-19 实施方案，至少说明现状、目标、不做内容、输入输出、Tool 权限、Harness关系、修改文件、调用链、验证、完成标准和风险。用户明确确认后，才开始 M2-19 的第一个小步骤。
+M2-20已经完成、验证并收口。M2-21工程化Agent需求讨论与待确认实施方案已经建立，但不是最终正式方案。下一步应复核方案中的M1复用粒度、顺序执行、PostgreSQL Checkpoint、回答Evidence Set、直接回答边界、独立预算、聊天API、Capability Resolver和十步拆分；只有最终方案明确确认后才能开始M2-21.1，不得自动修改现有Agent/API或进入M2-21.2及后续步骤。
 
 后续记录方式：
 

@@ -1,4 +1,4 @@
-"""Common strict types, errors, and tool envelopes for M1."""
+"""Common strict types, errors, and tool envelopes shared by M1 and M2."""
 
 from __future__ import annotations
 
@@ -37,7 +37,13 @@ ErrorCode = Literal[
 ]
 MarketCode = Literal["DE", "FR"]
 RoleName = Literal["company_owner", "product_scout", "amazon_operator"]
-ToolName = Literal["get_product_spec", "search_inventory"]
+ToolName = Literal[
+    "get_product_spec",
+    "search_inventory",
+    "search_knowledge",
+    "read_uploaded_file",
+    "get_evidence_detail",
+]
 ProductStatus = Literal["candidate", "active", "inactive", "discontinued"]
 VerificationStatus = Literal["demo_declared", "unverified", "verified"]
 
@@ -118,7 +124,7 @@ class ToolEnvelope(M1Schema, Generic[DataT]):
 
     status: Literal["success", "error"]
     data: DataT | None = None
-    evidence_ids: list[UUID] = Field(default_factory=list, max_length=10)
+    evidence_ids: list[UUID] = Field(default_factory=list, max_length=12)
     error: ErrorDetail | None = None
     meta: ToolMeta
 

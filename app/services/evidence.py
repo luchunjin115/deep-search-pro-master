@@ -18,8 +18,11 @@ from app.core.errors import (
     EvidenceReadError,
     KnowledgeEvidencePersistenceError,
 )
-from app.models.runtime import ContextArtifact, Evidence
-from app.repositories.evidence import KnowledgeEvidenceRepository
+from app.models.runtime import ContextArtifact, Evidence, ToolContextLink
+from app.repositories.evidence import (
+    AuthorizedDocumentEvidence,
+    KnowledgeEvidenceRepository,
+)
 from app.repositories.retrieval import ContextChunkRehydrationError
 from app.schemas.auth import CurrentUser
 from app.schemas.context import (
@@ -32,7 +35,10 @@ from app.schemas.evidence import (
     EvidenceAccessScope,
     EvidenceDetail,
     EvidenceSummary,
+    GetEvidenceDetailInput,
+    GetEvidenceDetailResult,
     InventoryEvidenceQuery,
+    ToolDocumentEvidenceDetail,
 )
 from app.schemas.inventory import InventoryResult, SearchInventoryInput
 from app.services.retrieval.context import BuiltContext, validate_built_context
@@ -186,7 +192,6 @@ class EvidenceService:
                     current_user,
                     built,
                     observed_at=observed_at,
-                    runtime_context=runtime_context,
                 )
                 self._knowledge_repository.insert_document_evidences(evidence_values)
                 evidence_rows = self._knowledge_repository.list_document_evidences(
@@ -195,6 +200,29 @@ class EvidenceService:
                 )
                 if not _evidence_rows_match(evidence_rows, evidence_values):
                     raise ValueError("persistent document Evidence conflicts")
+                if runtime_context is not None:
+                    tool_call = self._knowledge_repository.find_knowledge_tool_call(
+                        tenant_id=runtime_context.tenant_id,
+                        agent_run_id=runtime_context.agent_run_id,
+                        tool_call_id=runtime_context.tool_call_id,
+                    )
+                    if tool_call is None:
+                        raise ValueError("knowledge ToolCall is not linkable")
+                    link_values = _tool_context_link_values(
+                        runtime_context,
+                        context_id=built.bundle.context_id,
+                    )
+                    self._knowledge_repository.insert_tool_context_link(link_values)
+                    link_row = self._knowledge_repository.find_tool_context_link(
+                        tenant_id=runtime_context.tenant_id,
+                        agent_run_id=runtime_context.agent_run_id,
+                        tool_call_id=runtime_context.tool_call_id,
+                    )
+                    if link_row is None or not _tool_context_link_matches(
+                        link_row,
+                        link_values,
+                    ):
+                        raise ValueError("ToolCall Context link conflicts")
                 details = _document_evidence_details(built, evidence_rows)
         except (
             ContextChunkRehydrationError,
@@ -248,7 +276,6 @@ def _document_evidence_values(
     built: BuiltContext,
     *,
     observed_at: datetime,
-    runtime_context: EvidenceWriteContext | None,
 ) -> list[dict[str, object]]:
     values: list[dict[str, object]] = []
     for ordinal, (segment, source) in enumerate(
@@ -259,16 +286,8 @@ def _document_evidence_values(
             {
                 "id": segment.evidence_id,
                 "tenant_id": current_user.tenant_id,
-                "agent_run_id": (
-                    runtime_context.agent_run_id
-                    if runtime_context is not None
-                    else None
-                ),
-                "tool_call_id": (
-                    runtime_context.tool_call_id
-                    if runtime_context is not None
-                    else None
-                ),
+                "agent_run_id": None,
+                "tool_call_id": None,
                 "evidence_schema_version": "m2-document-evidence-v1",
                 "source_type": segment.source_type,
                 "source_name": "document_chunk",
@@ -296,6 +315,35 @@ def _document_evidence_values(
             }
         )
     return values
+
+
+def _tool_context_link_values(
+    runtime_context: EvidenceWriteContext,
+    *,
+    context_id: UUID,
+) -> dict[str, object]:
+    return {
+        "id": uuid4(),
+        "tenant_id": runtime_context.tenant_id,
+        "agent_run_id": runtime_context.agent_run_id,
+        "tool_call_id": runtime_context.tool_call_id,
+        "context_artifact_id": context_id,
+    }
+
+
+def _tool_context_link_matches(
+    row: ToolContextLink,
+    expected: dict[str, object],
+) -> bool:
+    return all(
+        getattr(row, field) == expected[field]
+        for field in (
+            "tenant_id",
+            "agent_run_id",
+            "tool_call_id",
+            "context_artifact_id",
+        )
+    )
 
 
 def _evidence_rows_match(
@@ -370,6 +418,12 @@ class EvidenceReader(Protocol):
 
     def find_by_id(self, *, tenant_id: UUID, evidence_id: UUID) -> Evidence | None: ...
 
+    def find_authorized_document_by_id(
+        self,
+        current_user: CurrentUser,
+        evidence_id: UUID,
+    ) -> AuthorizedDocumentEvidence | None: ...
+
 
 class EvidenceQueryService:
     """Hide absent, cross-tenant, and out-of-market Evidence identically."""
@@ -378,6 +432,44 @@ class EvidenceQueryService:
         self._repository = repository
 
     def get_detail(self, user: CurrentUser, evidence_id: UUID) -> EvidenceDetail:
+        """Keep the existing M1 HTTP detail path database-Evidence only."""
+
+        row = self._find_tenant_row(user, evidence_id)
+        if row.source_type != "database":
+            raise EvidenceNotFoundError
+        return self._database_detail(user, row)
+
+    def get_tool_detail(
+        self,
+        user: CurrentUser,
+        request: GetEvidenceDetailInput,
+    ) -> GetEvidenceDetailResult:
+        """Return one database or currently authorized document Tool detail."""
+
+        row = self._find_tenant_row(user, request.evidence_id)
+        detail: EvidenceDetail | ToolDocumentEvidenceDetail
+        if row.source_type == "database":
+            detail = self._database_detail(user, row)
+        elif row.source_type in {"knowledge", "user_file"}:
+            try:
+                document = self._repository.find_authorized_document_by_id(
+                    user,
+                    request.evidence_id,
+                )
+            except SQLAlchemyError:
+                raise EvidenceReadError from None
+            if document is None:
+                raise EvidenceNotFoundError
+            detail = self._document_detail(document)
+        else:
+            raise EvidenceReadError
+        return GetEvidenceDetailResult(detail=detail)
+
+    def _find_tenant_row(
+        self,
+        user: CurrentUser,
+        evidence_id: UUID,
+    ) -> Evidence:
         try:
             row = self._repository.find_by_id(
                 tenant_id=user.tenant_id,
@@ -387,7 +479,10 @@ class EvidenceQueryService:
             raise EvidenceReadError from None
         if row is None:
             raise EvidenceNotFoundError
+        return row
 
+    @staticmethod
+    def _database_detail(user: CurrentUser, row: Evidence) -> EvidenceDetail:
         try:
             detail = EvidenceDetail.model_validate(
                 {
@@ -415,6 +510,44 @@ class EvidenceQueryService:
         ).issubset(user.market_scopes):
             raise EvidenceNotFoundError
         return detail
+
+    @staticmethod
+    def _document_detail(
+        row: AuthorizedDocumentEvidence,
+    ) -> ToolDocumentEvidenceDetail:
+        try:
+            return ToolDocumentEvidenceDetail.model_validate(
+                {
+                    "id": row.id,
+                    "source_type": row.source_type,
+                    "file_id": row.file_id,
+                    "title": row.title,
+                    "excerpt": row.excerpt,
+                    "observed_at": row.observed_at,
+                    "context_id": row.context_id,
+                    "citation_label": f"[E{row.citation_ordinal}]",
+                    "identity": {
+                        "document_id": row.document_id,
+                        "version_id": row.document_version_id,
+                        "index_set_id": row.document_index_set_id,
+                        "chunk_id": row.document_chunk_id,
+                    },
+                    "document": {
+                        "title": row.document_title,
+                        "document_type": row.document_type,
+                        "language": row.language,
+                        "market": row.market,
+                    },
+                    "source_locator": row.source_locator,
+                    "source_content_sha256": row.source_content_sha256,
+                    "context_text_sha256": row.context_text_sha256,
+                    "trust_level": "document_snapshot",
+                    "synthetic_data": True,
+                    "created_at": row.created_at,
+                }
+            )
+        except ValidationError:
+            raise EvidenceReadError from None
 
     def get_summaries(
         self,

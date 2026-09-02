@@ -2,18 +2,57 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import AwareDatetime, Field, StringConstraints, model_validator
 
 from app.schemas.common import M1Schema, MarketCode, RoleName
+from app.schemas.context import ContextBundle
 from app.schemas.files import Sha256
 
 AccessLevel = Literal["private", "tenant", "restricted"]
 ParseStatus = Literal["pending", "parsing", "ready", "failed"]
 IndexStatus = Literal["pending", "indexing", "ready", "failed"]
 AclSubjectType = Literal["role", "user", "market"]
+KnowledgeQuery = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        strip_whitespace=True,
+        min_length=1,
+        max_length=2000,
+    ),
+]
+
+
+class SearchKnowledgeInput(M1Schema):
+    """The only model-controlled argument accepted by search_knowledge."""
+
+    query: KnowledgeQuery = Field(
+        description=(
+            "需要从当前用户获权知识库中查找证据的自然语言问题；"
+            "不得填写身份、权限、文件、检索参数或模型参数"
+        )
+    )
+
+
+class SearchKnowledgeResult(M1Schema):
+    """One public-safe Context bundle returned by search_knowledge."""
+
+    context: ContextBundle
+
+    @model_validator(mode="after")
+    def validate_supported_context(self) -> SearchKnowledgeResult:
+        if self.context.supported != bool(self.context.segments):
+            raise ValueError("context supported state must match its segments")
+        return self
+
+    @property
+    def evidence_ids(self) -> tuple[UUID, ...]:
+        """Derive the ordered Evidence allow-list without duplicating output data."""
+
+        return tuple(segment.evidence_id for segment in self.context.segments)
 
 
 class DocumentCreateInput(M1Schema):

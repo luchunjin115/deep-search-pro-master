@@ -11,11 +11,18 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.errors import KnowledgeEvidencePersistenceError
 from app.models.knowledge import Document, DocumentChunk
-from app.models.runtime import ContextArtifact, Evidence
+from app.models.runtime import (
+    AgentRun,
+    ContextArtifact,
+    Evidence,
+    Thread,
+    ToolCall,
+    ToolContextLink,
+)
 from app.repositories.evidence import KnowledgeEvidenceRepository
 from app.repositories.retrieval import RetrievalRepository
 from app.schemas.retrieval import RetrievalRequest
-from app.services.evidence import EvidenceService
+from app.services.evidence import EvidenceService, EvidenceWriteContext
 from app.services.retrieval.context import BuiltContext, ContextBuilderService
 from tests.integration import test_retrieval_repository_scope as scope_support
 from tests.integration.test_context_retrieval_repository import _response_for_chunks
@@ -24,7 +31,10 @@ from tests.integration.test_retrieval_repository_scope import RetrievalScopeFixt
 retrieval_scope_fixture = scope_support.retrieval_scope_fixture
 
 
-def _build_one(fixture: RetrievalScopeFixture) -> BuiltContext:
+def _build_one(
+    fixture: RetrievalScopeFixture,
+    query: str = "清洁前要做什么？",
+) -> BuiltContext:
     anchor = fixture.session.get(DocumentChunk, fixture.expected["owner"])
     assert anchor is not None
     anchor.body_text = "清洁蘑菇灯前必须断开电源。"
@@ -48,15 +58,80 @@ def _build_one(fixture: RetrievalScopeFixture) -> BuiltContext:
         neighbor_window=0,
     ).build(
         fixture.users["reader"],
-        RetrievalRequest(query="清洁前要做什么？"),
+        RetrievalRequest(query=query),
         _response_for_chunks(fixture, [anchor.id]),
     )
 
 
 def _counts(fixture: RetrievalScopeFixture) -> tuple[int, int]:
+    tenant_id = fixture.users["reader"].tenant_id
     return (
-        fixture.session.scalar(select(func.count()).select_from(ContextArtifact)) or 0,
-        fixture.session.scalar(select(func.count()).select_from(Evidence)) or 0,
+        fixture.session.scalar(
+            select(func.count())
+            .select_from(ContextArtifact)
+            .where(ContextArtifact.tenant_id == tenant_id)
+        )
+        or 0,
+        fixture.session.scalar(
+            select(func.count())
+            .select_from(Evidence)
+            .where(Evidence.tenant_id == tenant_id)
+        )
+        or 0,
+    )
+
+
+def _link_count(fixture: RetrievalScopeFixture) -> int:
+    tenant_id = fixture.users["reader"].tenant_id
+    return (
+        fixture.session.scalar(
+            select(func.count())
+            .select_from(ToolContextLink)
+            .where(ToolContextLink.tenant_id == tenant_id)
+        )
+        or 0
+    )
+
+
+def _runtime_context(
+    fixture: RetrievalScopeFixture,
+    suffix: str,
+) -> EvidenceWriteContext:
+    user = fixture.users["reader"]
+    thread = Thread(
+        id=uuid4(),
+        tenant_id=user.tenant_id,
+        user_id=user.user_id,
+        title=f"M2-19.2 {suffix}",
+    )
+    run = AgentRun(
+        id=uuid4(),
+        tenant_id=user.tenant_id,
+        thread_id=thread.id,
+        user_id=user.user_id,
+        trace_id=uuid4(),
+        route="knowledge_query",
+        status="running",
+        model_call_count=1,
+        tool_call_count=1,
+    )
+    tool_call = ToolCall(
+        id=uuid4(),
+        tenant_id=user.tenant_id,
+        agent_run_id=run.id,
+        sequence_no=1,
+        tool_name="search_knowledge",
+        tool_version="1.0.0",
+        arguments_summary={"query": suffix},
+        permission_result="allowed",
+        status="running",
+    )
+    fixture.session.add_all([thread, run, tool_call])
+    fixture.session.flush()
+    return EvidenceWriteContext(
+        tenant_id=user.tenant_id,
+        agent_run_id=run.id,
+        tool_call_id=tool_call.id,
     )
 
 
@@ -124,6 +199,93 @@ def test_repeating_the_same_build_reuses_exact_rows(
     assert first.reused is False
     assert second.reused is True
     assert _counts(fixture) == (1, 1)
+
+
+def test_runtime_context_creates_link_without_owning_document_evidence(
+    request: pytest.FixtureRequest,
+) -> None:
+    fixture = cast(
+        RetrievalScopeFixture,
+        request.getfixturevalue("retrieval_scope_fixture"),
+    )
+    built = _build_one(fixture)
+    runtime_context = _runtime_context(fixture, "first-link")
+
+    EvidenceService(fixture.session).persist_document_context(
+        fixture.users["reader"],
+        built,
+        runtime_context=runtime_context,
+    )
+
+    link = fixture.session.scalar(
+        select(ToolContextLink).where(
+            ToolContextLink.tenant_id == runtime_context.tenant_id,
+            ToolContextLink.tool_call_id == runtime_context.tool_call_id,
+        )
+    )
+    evidence = fixture.session.get(Evidence, built.bundle.segments[0].evidence_id)
+    assert link is not None
+    assert link.tenant_id == runtime_context.tenant_id
+    assert link.agent_run_id == runtime_context.agent_run_id
+    assert link.tool_call_id == runtime_context.tool_call_id
+    assert link.context_artifact_id == built.bundle.context_id
+    assert evidence is not None
+    assert evidence.agent_run_id is None
+    assert evidence.tool_call_id is None
+
+
+def test_context_can_be_reused_by_multiple_tool_calls_with_idempotent_links(
+    request: pytest.FixtureRequest,
+) -> None:
+    fixture = cast(
+        RetrievalScopeFixture,
+        request.getfixturevalue("retrieval_scope_fixture"),
+    )
+    built = _build_one(fixture)
+    service = EvidenceService(fixture.session)
+    first_runtime = _runtime_context(fixture, "first-reuse")
+    second_runtime = _runtime_context(fixture, "second-reuse")
+
+    first = service.persist_document_context(
+        fixture.users["reader"], built, runtime_context=first_runtime
+    )
+    retry = service.persist_document_context(
+        fixture.users["reader"], built, runtime_context=first_runtime
+    )
+    second = service.persist_document_context(
+        fixture.users["reader"], built, runtime_context=second_runtime
+    )
+
+    assert first.reused is False
+    assert retry.reused is True
+    assert second.reused is True
+    assert _counts(fixture) == (1, 1)
+    assert _link_count(fixture) == 2
+
+
+def test_one_tool_call_cannot_claim_two_contexts_and_rolls_back_new_rows(
+    request: pytest.FixtureRequest,
+) -> None:
+    fixture = cast(
+        RetrievalScopeFixture,
+        request.getfixturevalue("retrieval_scope_fixture"),
+    )
+    first = _build_one(fixture, "清洁前要做什么？")
+    second = _build_one(fixture, "清洁前需要先断开什么？")
+    assert first.bundle.context_id != second.bundle.context_id
+    runtime_context = _runtime_context(fixture, "one-call-two-contexts")
+    service = EvidenceService(fixture.session)
+    service.persist_document_context(
+        fixture.users["reader"], first, runtime_context=runtime_context
+    )
+
+    with pytest.raises(KnowledgeEvidencePersistenceError):
+        service.persist_document_context(
+            fixture.users["reader"], second, runtime_context=runtime_context
+        )
+
+    assert _counts(fixture) == (1, 1)
+    assert _link_count(fixture) == 1
 
 
 def test_empty_unsupported_context_persists_only_its_audit_artifact(
@@ -207,6 +369,11 @@ class _FailingKnowledgeEvidenceRepository(KnowledgeEvidenceRepository):
         raise SQLAlchemyError("secret database detail")
 
 
+class _FailingToolContextRepository(KnowledgeEvidenceRepository):
+    def insert_tool_context_link(self, values: dict[str, object]) -> bool:
+        raise SQLAlchemyError("secret tool-context link detail")
+
+
 def test_evidence_failure_rolls_back_the_context_artifact_savepoint(
     request: pytest.FixtureRequest,
 ) -> None:
@@ -225,3 +392,29 @@ def test_evidence_failure_rolls_back_the_context_artifact_savepoint(
 
     assert "secret" not in captured.value.to_detail().message
     assert _counts(fixture) == (0, 0)
+
+
+def test_link_failure_rolls_back_context_evidence_and_link_together(
+    request: pytest.FixtureRequest,
+) -> None:
+    fixture = cast(
+        RetrievalScopeFixture,
+        request.getfixturevalue("retrieval_scope_fixture"),
+    )
+    built = _build_one(fixture)
+    runtime_context = _runtime_context(fixture, "link-failure")
+    repository = _FailingToolContextRepository(fixture.session)
+
+    with pytest.raises(KnowledgeEvidencePersistenceError) as captured:
+        EvidenceService(
+            fixture.session,
+            knowledge_repository=repository,
+        ).persist_document_context(
+            fixture.users["reader"],
+            built,
+            runtime_context=runtime_context,
+        )
+
+    assert "secret" not in captured.value.to_detail().message
+    assert _counts(fixture) == (0, 0)
+    assert _link_count(fixture) == 0

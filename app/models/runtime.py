@@ -1,4 +1,4 @@
-"""Conversation, execution audit, tool call, and evidence models for M1."""
+"""Conversation, execution audit, Context, and Evidence models for M1/M2."""
 
 from __future__ import annotations
 
@@ -288,6 +288,12 @@ class ToolCall(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    context_link: Mapped[ToolContextLink | None] = relationship(
+        back_populates="tool_call",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
+    )
 
 
 class ContextArtifact(Base):
@@ -376,6 +382,57 @@ class ContextArtifact(Base):
     requested_by_user: Mapped[User] = relationship()
     evidences: Mapped[list[Evidence]] = relationship(
         back_populates="context_artifact",
+        viewonly=True,
+    )
+    tool_context_links: Mapped[list[ToolContextLink]] = relationship(
+        back_populates="context_artifact",
+        viewonly=True,
+    )
+
+
+class ToolContextLink(Base):
+    """One guarded ToolCall's auditable use of a reusable Context Artifact."""
+
+    __tablename__ = "tool_context_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "tool_call_id",
+            name="uq_tool_context_links_tenant_tool_call",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "tool_call_id", "agent_run_id"],
+            ["tool_calls.tenant_id", "tool_calls.id", "tool_calls.agent_run_id"],
+            name="fk_tool_context_links_tenant_tool_call_run",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "context_artifact_id"],
+            ["context_artifacts.tenant_id", "context_artifacts.id"],
+            name="fk_tool_context_links_tenant_context",
+            ondelete="RESTRICT",
+        ),
+        Index(
+            "ix_tool_context_links_tenant_context",
+            "tenant_id",
+            "context_artifact_id",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    agent_run_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    tool_call_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    context_artifact_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    tool_call: Mapped[ToolCall] = relationship(back_populates="context_link")
+    context_artifact: Mapped[ContextArtifact] = relationship(
+        back_populates="tool_context_links",
         viewonly=True,
     )
 
@@ -483,6 +540,7 @@ class Evidence(Base):
             "AND source_content_sha256 IS NULL AND context_text_sha256 IS NULL) "
             "OR (source_type IN ('knowledge', 'user_file') "
             "AND evidence_schema_version = 'm2-document-evidence-v1' "
+            "AND agent_run_id IS NULL AND tool_call_id IS NULL "
             "AND source_locator IS NULL AND source_locator_json IS NOT NULL "
             "AND query_summary IS NULL AND structured_data IS NULL "
             "AND access_scope IS NULL AND trust_level = 'document_snapshot' "

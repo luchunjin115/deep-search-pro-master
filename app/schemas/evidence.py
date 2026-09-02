@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypeAlias
 from uuid import UUID
 
 from pydantic import AwareDatetime, Field, StringConstraints
@@ -109,3 +109,35 @@ class DocumentEvidenceDetail(DocumentEvidenceSummary):
     ]
     trust_level: Literal["document_snapshot"] = "document_snapshot"
     created_at: AwareDatetime
+
+
+class ToolDocumentEvidenceDetail(DocumentEvidenceDetail):
+    """Document Evidence Tool detail with the next public file-ID hop."""
+
+    file_id: UUID
+
+
+EvidenceToolDetail: TypeAlias = Annotated[
+    EvidenceDetail | ToolDocumentEvidenceDetail,
+    Field(discriminator="source_type"),
+]
+
+
+class GetEvidenceDetailInput(M1Schema):
+    """The only model-controlled argument accepted by get_evidence_detail."""
+
+    evidence_id: UUID = Field(
+        description="需要按当前身份和权限重新验证并展开的公开Evidence ID"
+    )
+
+
+class GetEvidenceDetailResult(M1Schema):
+    """One authorized database or document Evidence detail."""
+
+    detail: EvidenceToolDetail
+
+    @property
+    def evidence_id(self) -> UUID:
+        """Return the verified ID used by the success ToolEnvelope."""
+
+        return self.detail.id
