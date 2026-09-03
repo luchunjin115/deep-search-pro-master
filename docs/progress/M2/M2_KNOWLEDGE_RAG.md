@@ -2,7 +2,7 @@
 
 > 本文件是 M2 的唯一必读入口，只保存当前状态、关键决策、步骤索引、风险和下一动作。
 > 完整方案、实施日志和验证证据保存在 [`records/`](records/) 中，开始具体任务时按需读取。
-> 最近更新：2026-09-02
+> 最近更新：2026-09-03
 
 ## 1. 当前状态
 
@@ -10,12 +10,12 @@
 |---|---|
 | 阶段状态 | 进行中 |
 | 已完成 | M2-01 至 M2-20；文件与Evidence受控读取两条Tool链已完成整链矩阵并收口 |
-| 当前停止点 | M2-20整体已完成；M2-21需求讨论与待确认实施方案已记录，最终正式方案尚未确认 |
-| 下一动作 | 复核M2-21待确认实施方案的十项关键取舍；最终确认前不编码，确认后也只开始M2-21.1 |
+| 当前停止点 | M2-20整体已完成；M2-21工程化多Agent正式方案及推荐决策已确认，尚未授权开始M2-21.1 |
+| 下一动作 | 等待用户单独确认开始M2-21.1“冻结Agent、Task、Action、Delegation和Result核心合同”；不得自动进入M2-21.2 |
 | 尚未开始 | M2-21至M2-24、知识问答 HTTP API、知识 Agent/LangGraph、Qwen 基于证据回答、前端知识问答 |
 | 技术阻塞 | 无硬阻塞；存在性能和上游质量边界，见第 7 节 |
 
-M2-20.1至M2-20.6已经全部完成并验证。M2-21已有需求讨论和待确认实施方案，但尚未得到最终确认，不得自动开始代码开发。
+M2-20.1至M2-20.6已经全部完成并验证。M2-21工程化多Agent正式方案和全部推荐决策已于2026-09-03确认，但方案确认不等于开发授权；当前不得自动开始M2-21.1。
 
 ## 2. 新窗口阅读顺序
 
@@ -44,8 +44,7 @@ M2-20.1至M2-20.6已经全部完成并验证。M2-21已有需求讨论和待确�
 | [M2_18_CONTEXT_EVIDENCE.md](records/M2_18_CONTEXT_EVIDENCE.md) | Context合同、持久化、安全重取、Builder、Evidence和引用验证 | 讨论或实现 M2-19 Tool，以及修改引用链时 |
 | [M2_19_SEARCH_KNOWLEDGE_TOOL.md](records/M2_19_SEARCH_KNOWLEDGE_TOOL.md) | `search_knowledge` Tool完整方案、合同、审计关联、五步实施顺序、验证矩阵和风险 | 确认或实施M2-19时 |
 | [M2_20_FILE_EVIDENCE_TOOLS.md](records/M2_20_FILE_EVIDENCE_TOOLS.md) | `read_uploaded_file/get_evidence_detail`完整方案、用户确认、严格合同、实施日志和验证矩阵 | 确认或实施M2-20时 |
-| [M2_21_ENGINEERED_AGENT.md](records/M2_21_ENGINEERED_AGENT.md) | 工程化Agent需求讨论、方向性共识、候选运行模型、未决问题和非正式步骤草案 | 继续讨论或形成M2-21最终正式方案时 |
-| [M2_21_ENGINEERED_AGENT_IMPLEMENTATION_PLAN.md](records/M2_21_ENGINEERED_AGENT_IMPLEMENTATION_PLAN.md) | 基于当前方向形成的待确认实施方案、十步顺序、文件、验证、完成标准和风险 | 复核、修改或最终确认M2-21实施方案时 |
+| [M2_21_ENGINEERED_MULTI_AGENT_PLAN.md](records/M2_21_ENGINEERED_MULTI_AGENT_PLAN.md) | M2-21唯一记录；包含已确认的工程化多Agent正式方案、历史讨论结论、角色、能力原语、Handoff、记忆、跨阶段边界、十二步实施顺序，以及后续逐步追加的实施与验证日志 | 开始任一M2-21.x前必读，并在每步完成后继续追加记录 |
 
 这些文件是正式阶段记录，不是可删除的临时归档。入口只做导航和当前状态摘要，完整完成证据仍以对应过程记录为准。
 
@@ -144,7 +143,7 @@ M2-20以后尚未接通的后半段：
 | M2-18 | 已完成 | Context、Evidence、原子持久化与严格引用验证 | [Context记录](records/M2_18_CONTEXT_EVIDENCE.md) |
 | M2-19 | 已完成 | 严格合同、隔离Registry、审计关联、应用Service、正式Tool/Harness及权限/故障矩阵完成 | [M2-19记录](records/M2_19_SEARCH_KNOWLEDGE_TOOL.md) |
 | M2-20 | 已完成 | 两个受控读取Tool的合同、Service、Harness接入及真实权限/范围/故障矩阵完成 | [M2-20记录](records/M2_20_FILE_EVIDENCE_TOOLS.md) |
-| M2-21 | 待开始 | 工程化Agent需求讨论与待确认实施方案已记录；尚未授权开发 | [待确认方案](records/M2_21_ENGINEERED_AGENT_IMPLEMENTATION_PLAN.md) / [讨论草案](records/M2_21_ENGINEERED_AGENT.md) / [原始计划](records/M2_00_STAGE_PLAN.md) |
+| M2-21 | 待开始 | 工程化多Agent正式方案及推荐决策已确认；等待单独授权M2-21.1 | [M2-21唯一方案与过程记录](records/M2_21_ENGINEERED_MULTI_AGENT_PLAN.md) / [M2原始计划](records/M2_00_STAGE_PLAN.md) |
 | M2-22 | 待开始 | 最小 RAG 评估集和 Runner | [原始计划](records/M2_00_STAGE_PLAN.md) |
 | M2-23 | 待开始 | 最小前端上传、知识问答和引用展示 | [原始计划](records/M2_00_STAGE_PLAN.md) |
 | M2-24 | 待开始 | 故障矩阵、真实演示、Chromium 回归和阶段收口 | [原始计划](records/M2_00_STAGE_PLAN.md) |
@@ -173,6 +172,11 @@ M2-20以后尚未接通的后半段：
 - `ReadUploadedFileTool`精确绑定M2 Registry，通过Harness执行并核对绑定`CurrentUser`与运行上下文的用户、tenant、角色和市场；Service结果类型与公开file ID必须和请求一致，成功Envelope不创建或伪造Evidence。
 - M1 `EvidenceQueryService.get_detail`继续只服务数据库Evidence与既有HTTP合同；M2统一`get_tool_detail`可返回数据库或文档详情，文档分支必须重新核对Context请求者、当前ACL/软删除/active代次和完整Chunk来源，失败统一隐藏为`EVIDENCE_NOT_FOUND`。
 - `get_evidence_detail`输入只允许Evidence ID，统一输出M1数据库或M2文档Evidence安全详情；正式Tool精确绑定可信身份并经过Harness，Service结果ID必须与请求一致，成功Envelope只携带该Evidence ID。
+- M2-21采用Supervisor＋Business Data/Knowledge两个首批Worker的工程化多Agent底座；L0直接回答、L1单Worker、L2多Worker按任务复杂度自适应，不使用库存/知识固定意图if/else。
+- Capability Catalog从第一版区分Tool、Skill、Agent和未来Runtime capability；只登记真实已实现能力，通用能力原语不要求全部在M2-21实现。
+- M2-21第一版只有Supervisor可以Handoff；共享任务板、局部工作记忆、PostgreSQL Checkpoint、父子Run、树形预算和统一Answer Provider/Evidence交接进入阶段范围。
+- M2-21先验证顺序执行，并在收口前验证独立只读Worker有界并行；长期偏好/经验记忆、Code Interpreter、Browser和后续专业Worker按真实需求分配到后续里程碑。
+- M2-21采用Walking Skeleton实施顺序：先冻结最小合同和能力目录，M2-21.4跑通Mock/Fake最小闭环，M2-21.6跑通Business真实纵向链，M2-21.7验证顺序双Worker，再固化持久化、接入真实Qwen并完成API和矩阵。
 
 ### 7.2 当前风险与边界
 
@@ -201,7 +205,7 @@ M2-20.6 收口时的实际结果：
 
 ## 9. 下一步和记录规则
 
-M2-20已经完成、验证并收口。M2-21工程化Agent需求讨论与待确认实施方案已经建立，但不是最终正式方案。下一步应复核方案中的M1复用粒度、顺序执行、PostgreSQL Checkpoint、回答Evidence Set、直接回答边界、独立预算、聊天API、Capability Resolver和十步拆分；只有最终方案明确确认后才能开始M2-21.1，不得自动修改现有Agent/API或进入M2-21.2及后续步骤。
+M2-20已经完成、验证并收口。M2-21“多Agent核心底座＋首批Business Data/Knowledge两个真实Worker”正式方案及推荐决策已经确认，包括自适应L0-L3执行、Capability Catalog、Supervisor/Worker职责、Handoff、父子Run、短期记忆与Checkpoint、树形预算、Evidence交接、有界并发和跨M2-22/M2-23/M3/M4/M5边界；实施顺序已确认调整为先最小闭环和真实Worker、后持久化与真实Qwen的Walking Skeleton。当前只等待用户单独授权M2-21.1；不得自动修改现有Agent/API或进入M2-21.2及后续步骤。
 
 后续记录方式：
 
