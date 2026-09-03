@@ -24,9 +24,9 @@
 | M0 | 产品、技术、数据、评估与协作基线 | 已完成 | [M0详细记录](progress/M0_DESIGN.md) |
 | M1 | 库存查询垂直切片 | 已完成 | [M1当前入口](progress/M1/M1_INVENTORY_QUERY.md) |
 | M2 | 自建RAG垂直切片 | 进行中 | [M2当前入口](progress/M2/M2_KNOWLEDGE_RAG.md) |
-| M3 | 多模态商品分析 | 待开始 | 等待M2完成 |
-| M4 | 深度研究与报告 | 待开始 | 等待M3完成 |
-| M5 | 评估、加固与作品化 | 待开始 | 等待M4完成 |
+| M3 | 多模态商品分析（秋招主线暂缓） | 待开始 | [秋招范围调整方案](design/05_Autumn_Recruitment_Scope_Adjustment_Plan.md) |
+| M4 | 通用有界深度研究与报告 | 待确认 | M2完成后单独确认详细范围；不再等待M3 |
+| M5 | Agent/RAG评估、加固与作品化 | 待开始 | M4范围确认后细化 |
 
 M2 的完整历史方案、步骤日志和验证证据位于 [`progress/M2/records/`](progress/M2/records/)；新窗口默认只读取 M2 当前入口，开始具体任务时再按需读取对应过程记录。
 
@@ -46,6 +46,7 @@ M2 的完整历史方案、步骤日志和验证证据位于 [`progress/M2/recor
 | Tool权限 | 单个Agent或Skill只获得1至5个允许Tool，模型不能直接访问数据库 |
 | Harness | 统一负责上下文、权限、白名单、预算、超时重试、审计、证据和评估钩子 |
 | MCP | V1不引入；连接真实外部系统或向外部客户端复用时再评估 |
+| 秋招范围调整 | M3多模态暂缓；M4必须保留为通用有界的内外部深度研究能力，具体档位待确认；M5保留Agent/RAG评估、加固和作品化；详见[调整方案](design/05_Autumn_Recruitment_Scope_Adjustment_Plan.md) |
 | 开发方式 | 教学式协作、阶段方案先确认、一次完成一个可验证小步骤 |
 | 阶段文档结构 | M1及以后统一使用`docs/progress/M{编号}/`，阶段短入口与`records/`过程记录分离；新窗口按当前任务读取，不默认加载全部历史 |
 
@@ -78,6 +79,7 @@ M2-20.6 收口时：
 
 ## 6. 最近完成摘要
 
+- 2026-09-03：形成秋招目标下的跨阶段范围调整方案。已确认先完成M2，M3多模态暂缓，M4必须保留且定位为通用有界的企业数据库＋内部RAG＋公开互联网深度研究能力，M5保留评估、加固和作品化；M4具体档位仍待后续单独确认。本次只有设计与进度记录，没有修改或授权任何运行代码。
 - 2026-09-03：M2-21工程化多Agent正式方案及推荐决策已确认；阶段定位为Supervisor＋Business Data/Knowledge首批Worker的核心底座，并冻结能力目录、Handoff、记忆、Checkpoint、树形预算、Evidence交接、分层执行和跨里程碑边界。实施顺序进一步确认为Walking Skeleton：先最小闭环和真实Worker，后持久化、真实Qwen、API及完整矩阵；只完成方案文档，尚未授权开始M2-21.1。
 - 2026-09-02：完成M2-20.6真实权限/范围/故障矩阵并收口M2-20；两个读取Tool在同一真实Harness下覆盖三角色、五授权路径、撤权、软删除、旧代次、解析/locator、Storage/Artifact、数据库故障和Trace脱敏。没有修改生产代码，没有开始M2-21、API、Agent、Qwen或前端。
 - 2026-09-02：完成M2-20.5 `GetEvidenceDetailTool`与Harness接入；精确绑定M2 Registry和可信身份，通过角色、重复预算、3000ms超时与Trace门禁，核对Service结果Evidence ID且成功Envelope只携带该ID。没有开始M2-20.6、API、Agent、Qwen或前端。
