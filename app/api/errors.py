@@ -78,6 +78,7 @@ def _status_for_error(error: ApplicationError) -> int:
         "DOCUMENT_STATE_CONFLICT": 409,
         "DOCUMENT_VERSION_CONFLICT": 409,
         "DOCUMENT_ACL_CONFLICT": 409,
+        "AGENT_RUN_CONFLICT": 409,
         "VALIDATION_ERROR": 422,
         "DATABASE_UNAVAILABLE": 503,
         "DATABASE_TIMEOUT": 504,

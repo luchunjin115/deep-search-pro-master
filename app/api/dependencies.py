@@ -8,9 +8,12 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.agents.gateway import AgentGateway
 from app.core.config import Settings
 from app.core.errors import InvalidAccessTokenError, RequestTransactionError
 from app.db.session import DatabaseRuntime
+from app.llm.agent_factory import create_engineered_agent_provider
+from app.llm.agent_provider import EngineeredAgentProvider
 from app.llm.provider import ModelProvider, create_model_provider
 from app.repositories.conversation import ConversationRepository
 from app.repositories.documents import DocumentRepository
@@ -24,7 +27,12 @@ from app.services.documents.indexing.service import DocumentIndexService
 from app.services.documents.service import DocumentService
 from app.services.evidence import EvidenceQueryService
 from app.services.files import FileService
-from app.services.retrieval import EmbeddingProvider, create_embedding_provider
+from app.services.retrieval import (
+    EmbeddingProvider,
+    RerankerProvider,
+    create_embedding_provider,
+    create_reranker_provider,
+)
 from app.services.storage import LocalStorageBackend, StorageBackend
 
 
@@ -188,6 +196,25 @@ EmbeddingProviderDependency = Annotated[
 ]
 
 
+def get_reranker_provider(
+    request: Request,
+    settings: AppSettings,
+) -> RerankerProvider:
+    """Lazily share the configured reranker provider within one application."""
+
+    provider: RerankerProvider | None = request.app.state.reranker_provider
+    if provider is None:
+        provider = create_reranker_provider(settings)
+        request.app.state.reranker_provider = provider
+    return provider
+
+
+RerankerProviderDependency = Annotated[
+    RerankerProvider,
+    Depends(get_reranker_provider),
+]
+
+
 def get_document_index_service(
     runtime: DatabaseRuntimeDependency,
     storage: StorageBackendDependency,
@@ -256,6 +283,55 @@ async def get_model_provider(
 
 
 ModelProviderDependency = Annotated[ModelProvider, Depends(get_model_provider)]
+
+
+async def get_engineered_agent_provider(
+    request: Request,
+    settings: AppSettings,
+) -> AsyncGenerator[EngineeredAgentProvider, None]:
+    """Create the four-operation Agent provider used only behind the Gateway."""
+
+    factory: Callable[[], EngineeredAgentProvider] | None = (
+        request.app.state.engineered_agent_provider_factory
+    )
+    provider = (
+        factory() if factory is not None else create_engineered_agent_provider(settings)
+    )
+    try:
+        yield provider
+    finally:
+        close = getattr(provider, "aclose", None)
+        if close is not None:
+            await close()
+
+
+EngineeredAgentProviderDependency = Annotated[
+    EngineeredAgentProvider,
+    Depends(get_engineered_agent_provider),
+]
+
+
+def get_agent_gateway(
+    provider: EngineeredAgentProviderDependency,
+    runtime: DatabaseRuntimeDependency,
+    settings: AppSettings,
+    storage: StorageBackendDependency,
+    embedding_provider: EmbeddingProviderDependency,
+    reranker_provider: RerankerProviderDependency,
+) -> AgentGateway:
+    """Assemble the unique public Agent entry from server-owned resources."""
+
+    return AgentGateway(
+        provider=provider,
+        session_factory=runtime.session_factory,
+        settings=settings,
+        storage=storage,
+        embedding_provider=embedding_provider,
+        reranker_provider=reranker_provider,
+    )
+
+
+AgentGatewayDependency = Annotated[AgentGateway, Depends(get_agent_gateway)]
 
 
 def get_conversation_service(

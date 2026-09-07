@@ -4,6 +4,7 @@ fastapi>=0.129,<0.130
 uvicorn[standard]>=0.41,<0.42
 pydantic>=2.12,<3
 pydantic-settings>=2.13,<3
+jsonschema>=4.26,<5
 SQLAlchemy>=2.0.46,<3
 psycopg[binary]>=3.2,<4
 alembic>=1.16,<2

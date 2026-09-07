@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     )
     qwen_api_key: SecretStr | None = None
     qwen_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
+    qwen_agent_max_output_tokens: int = Field(default=4096, ge=256, le=8192)
 
     jwt_secret_key: SecretStr = SecretStr(
         "local-development-only-change-before-production"

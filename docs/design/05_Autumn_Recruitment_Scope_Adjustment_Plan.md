@@ -1,9 +1,11 @@
 # 秋招目标下的项目范围调整与实施方案
 
-> 文档状态：方向已确认，M4详细范围待确认
+> 文档状态：方向与M4推荐版详细范围已确认
 > 记录日期：2026-09-03
 > 适用范围：M2后续收口、M3暂缓、M4重新定界、M5精简保留
-> 当前开发授权：本文只记录方案，不授权开始M2-21.1、M3、M4或M5代码开发
+> 当前开发授权：本文与M4正式阶段文档只记录方案，不授权开始M2-21.1、M3、M4-01或M5代码开发
+>
+> 2026-09-04更新：M2-21秋招目标复核方案已经用户确认；该复核不删除M2、M4或M5能力。当前先讲清整个M2-21，仍不构成M2-21.1开发授权。
 
 ## 1. 为什么需要这份文档
 
@@ -12,7 +14,7 @@
 - 图片、OCR、相似SKU、网络研究、表格分析、图表、PDF和多个Skill同时展开，范围过大；
 - 每项能力可能只能完成表面Demo，难以留下真实指标、故障矩阵和可讲清楚的Bad Case。
 
-本轮讨论形成的新方向是：优先把多Agent、RAG、Evidence、权限、评估和完整前后端链路做深；M3多模态从秋招主线暂缓；M4必须保留，以避免项目退化为普通企业内部RAG问答，但M4具体完成程度需要后续单独讨论和确认；M5中的评估、加固和作品化不能删除。
+本轮讨论形成的新方向是：优先把多Agent、RAG、Evidence、权限、评估和完整前后端链路做深；M3多模态从秋招主线暂缓；M4必须保留，以避免项目退化为普通企业内部RAG问答。2026-09-03后续讨论已经确认M4采用推荐版，完整有效方案见[M4阶段入口](../progress/M4/M4_DEEP_RESEARCH.md)与[M4-00正式方案](../progress/M4/records/M4_00_STAGE_PLAN.md)；M5中的评估、加固和作品化不能删除。
 
 本文负责保存讨论结论、边界、候选实施范围和后续确认点。原始总体设计继续保留，用于说明项目最初愿景和被主动裁剪的范围。
 
@@ -31,19 +33,14 @@
 9. Agent不是简单的“LLM加一个函数”。LLM接收Tool名称、描述和Schema并提出调用建议；LangGraph管理状态和流程；Harness实施权限、预算、超时和审计；Service与Repository真正执行确定性能力。
 10. Tool定义Agent可以对外部世界采取的动作范围，但最终效果还取决于模型、Tool合同、数据质量、上下文、编排、权限和结果验证。
 11. M5可以按新范围压缩样本和模块，但RAG/Agent评估、安全故障测试、性能成本、README、架构图、演示视频和简历材料不能删除。
+12. M4采用推荐版：复用Supervisor、Business Data Worker和Knowledge Worker，只新增Web Research Worker；Analysis和Report首版使用确定性Service，不作为独立Worker。
+13. 联网链路采用`search_public_web`与`read_public_source`两个受控Tool，经Service、Provider调用Tavily API；日常测试使用Fake Provider，V1不引入MCP。
+14. M4首版先顺序验证再增加独立只读Worker有界并行，以PostgreSQL保存父子Run、任务租约和Checkpoint；不引入Redis/Celery。
+15. M4首版输出结构化结果和Markdown，实现一个`cross-border-market-research` Skill；不做PDF、复杂指标、Pandas图表或额外M4 Skill。
 
 ### 2.2 尚未确认的事项
 
-1. M4采用最小版、推荐版还是接近原始完整版。
-2. M4首版是否必须接入Tavily真实搜索，还是先以Provider加Fake完成确定性闭环。
-3. 首版是否实现三个Worker并行，还是先顺序执行后再增加有界并行。
-4. M4是否把PostgreSQL Checkpoint作为首版完成条件。
-5. 输出是否只包含结构化回答与Markdown，还是同时生成PDF。
-6. 是否保留`query_business_metrics`、表格分析和图表数据能力。
-7. M4首版是否正式实现一个可版本化研究Skill。
-8. M5评估集最终规模、分布和质量门槛。
-
-这些事项必须在M4阶段正式方案中逐项确认。本文不得被解释为对具体实现的自动授权。
+M4上述范围问题均已在正式阶段方案中确认。M5评估集最终规模、分布和质量门槛仍需在M5正式方案中确认；M4每个开发步骤仍需单独授权。本文不得被解释为对运行代码的自动授权。
 
 ## 3. 调整前后的项目定位
 
@@ -52,10 +49,10 @@
 | 项目定位 | 多模态多Agent深度研究平台 | 权限感知的多Agent企业知识、数据与网络研究平台 |
 | 主要输入 | 数据库、文档、图片、网页、表格 | 数据库、内部文档、公开网页；图片暂缓 |
 | M3 | 完整多模态商品分析 | 暂缓，不进入当前关键路径 |
-| M4 | 多Worker、网络、报价、指标、图表、Markdown/PDF和4个Skill | 保留通用有界研究主线，具体深度待确认 |
+| M4 | 多Worker、网络、报价、指标、图表、Markdown/PDF和4个Skill | 推荐版：只新增Web Worker，保留三类Evidence、有界并行、PostgreSQL Checkpoint、Markdown和1个研究Skill |
 | M5 | 150条覆盖全部模态的评估与作品化 | 删除多模态评估，保留Agent/RAG/安全/性能与作品化 |
 | Tool范围 | V1目标约13个 | 不以数量为目标，只实现研究闭环真正需要的Tool |
-| Skill范围 | 5个业务Skill | 具体数量待M4确认，优先保证一个真实能力闭环 |
+| Skill范围 | 5个业务Skill | M4首版只实现`cross-border-market-research`；M3和其他候选Skill不进入当前主线 |
 | 求职叙事 | 技术覆盖全面 | Agent、RAG、Evidence和工程可靠性更集中 |
 
 ## 4. 调整后的阶段关系
@@ -71,7 +68,7 @@ M3：多模态商品分析
   秋招主线暂缓，不作为M4前置条件
     ↓
 M4：数据库＋内部RAG＋公开互联网的通用有界深度研究
-  必须保留，详细范围另行确认
+  推荐版正式方案已确认，等待M2收口后单独授权M4-01
     ↓
 M5：Agent/RAG评估、安全加固、性能成本与求职作品化
   必须保留，按新范围精简
@@ -144,9 +141,9 @@ generate_germany_france_mushroom_lamp_report
 - RAG最小评估集与Runner；
 - 权限、故障、真实演示和Chromium回归。
 
-### 6.3 明确不受本次调整影响的内容
+### 6.3 M2-21复核边界
 
-本次不修改M2-21已确认方案，也不授权开始M2-21.1。M2仍按其独立入口与过程记录推进，每个子步骤继续单独确认。
+2026-09-04用户已确认复核后的公开Agent Gateway主路径、旧M1兼容生命周期、Worker自主循环、统一回答和验证顺序；方案不删除Supervisor、两个真实Worker、记忆、Checkpoint、树形预算、并行或后续评估/前端能力。当前只进入整个M2-21实施前讲解，不授权开始M2-21.1；M2继续以其[独立入口](../progress/M2/M2_KNOWLEDGE_RAG.md)和[M2-21唯一记录](../progress/M2/records/M2_21_ENGINEERED_MULTI_AGENT_PLAN.md)为准，每个开发小步骤单独确认。
 
 ## 7. M3处理方式
 
@@ -179,7 +176,7 @@ M3状态仍使用项目统一枚举中的`待开始`，但从秋招关键路径�
 
 M4要证明系统能够根据用户目标动态规划，在权限和预算范围内组合内部与外部能力，形成可追溯的研究结果，而不是只能完成企业内部文档问答。
 
-推荐的能力结构是：
+已确认的能力结构是：
 
 ```text
 Supervisor
@@ -214,17 +211,18 @@ M4追求通用能力原语，但不是万能互联网Agent。首版边界包括�
 
 ### 8.4 输出形态
 
-候选输出类型包括：
+首版输出类型包括：
 
 ```text
 short_answer
 evidence_summary
+verification
 comparison
 research_memo
 report
 ```
 
-输出类型由用户目标和任务复杂度决定。Markdown/PDF是结果呈现形式，不应反向决定底层研究逻辑。
+输出类型由用户目标和任务复杂度决定。首版由统一Answer Provider完成有证据的内容合成，Report Service只负责确定性Markdown组织；PDF不在当前M4范围，呈现形式不反向决定底层研究逻辑。
 
 ### 8.5 Golden Scenario与非硬编码要求
 
@@ -239,7 +237,7 @@ report
 
 这样可以证明底层能力能够组合，而不是只对一条固定Prompt工作。
 
-### 8.6 三档候选范围
+### 8.6 三档比较与最终选择
 
 | 档位 | 能力 | 优点 | 缺点 |
 |---|---|---|---|
@@ -247,7 +245,7 @@ report
 | 推荐版 | 增加Web Worker、Tavily Provider、三类Evidence、有界并行、父子Run、预算、Checkpoint、Markdown研究结果和一个研究Skill | 能证明通用多来源研究与工程化Agent | 仍需较完整的安全、质量和成本验证 |
 | 完整版 | 继续增加供应商报价、经营指标、Pandas、图表、PDF、更多Tool和4个Skill | 产品能力最完整 | 范围、测试和面试准备成本最高 |
 
-本轮只确认M4必须保留，以及其能力不能被场景写死；尚未确认采用哪一档。开始M4前必须单独提交正式阶段方案。
+上表保留当时的取舍依据。2026-09-03已经正式选择推荐版，详细边界和十步顺序以[M4阶段入口](../progress/M4/M4_DEEP_RESEARCH.md)与[M4-00正式方案](../progress/M4/records/M4_00_STAGE_PLAN.md)为准。方案确认不自动授权M4-01。
 
 ## 9. M5保留范围
 
@@ -284,28 +282,27 @@ report
 - 验证：单元、真实PostgreSQL集成、真实Qwen/BGE Smoke、Chromium端到端、权限与故障矩阵；
 - 完成标准：库存和知识Worker通过统一多Agent底座返回可核验Evidence，M2-24正式收口。
 
-### 步骤2：提交M4正式阶段方案
+### 步骤2：提交M4正式阶段方案（已完成）
 
-- 预计新增：`docs/progress/M4/M4_DEEP_RESEARCH.md`与`records/M4_00_STAGE_PLAN.md`；
-- 前置条件：M2已完成，M4档位、Tool、Worker、输出和评估边界已讨论清楚；
-- 调用链：属于方案层，尚不修改运行链；
-- 验证：逐项检查范围、文件、调用链、验收和风险是否完整；
-- 完成标准：用户明确确认M4正式方案，但不自动授权所有后续步骤。
+- 已新增：`docs/progress/M4/M4_DEEP_RESEARCH.md`与`records/M4_00_STAGE_PLAN.md`；
+- 已确认：推荐版、两个Web Tool、只新增Web Research Worker、三类Evidence、PostgreSQL恢复、Markdown和一个研究Skill；
+- 调用链：本步只属于方案层，尚未修改运行链；
+- 当前边界：M4阶段状态仍是`待开始`，M2收口前不授权M4-01。
 
 ### 步骤3：按Walking Skeleton实现M4
 
-推荐顺序仅作为候选，等待M4正式方案确认：
+以下是正式方案的摘要，精确输入、输出、文件、验证和完成标准以[M4-00正式方案](../progress/M4/records/M4_00_STAGE_PLAN.md)为准：
 
-1. 冻结研究请求、计划、Web Evidence和输出合同；
-2. 建立Web Search Provider与确定性Fake；
-3. 建立`search_public_web`只读Tool与Harness策略；
-4. 建立Web Research Worker；
-5. 跑通单Web Worker事实查询；
-6. 跑通Knowledge＋Web内外部核验；
-7. 跑通Business＋Knowledge＋Web综合任务；
-8. 增加父子Run、有界并行与Checkpoint；
-9. 增加Markdown研究结果和前端进度/Evidence展示；
-10. 接入真实Tavily，完成质量、安全、成本和故障验收。
+1. 冻结研究、搜索、正文读取、Web Evidence、任务和结果合同；
+2. 建立搜索/正文Provider接口与确定性Fake；
+3. 建立`search_public_web` Service/Tool与Harness策略；
+4. 建立受控`read_public_source`与长网页Evidence管线；
+5. 建立Web Research Worker和单Web查询；
+6. 跑通Knowledge＋Web及Business＋Knowledge＋Web顺序协作；
+7. 增加PostgreSQL任务、租约、Checkpoint和有界并行恢复；
+8. 增加`cross-border-market-research` Skill与Markdown Service；
+9. 增加任务API及前端进度、结果、Evidence展示；
+10. 接入真实Tavily并完成质量、安全、成本、故障和端到端验收。
 
 ### 步骤4：提交并实施精简M5
 
@@ -321,7 +318,7 @@ report
 |---|---|---|---|---|---|---|
 | 本文档 | 不经过 | 不经过 | 不经过 | 不经过 | 不经过 | 不经过 |
 | M2完成态 | 聊天、上传、Evidence | 会话与知识问答 | Agent/Tool/Context | RAG与业务Service | Qwen＋Supervisor/Worker | 业务、文档、向量、Evidence、Trace |
-| M4候选 | 研究任务、进度、结果 | 任务创建与状态 | 计划、Handoff、Web Evidence | Web Provider与报告Service | Supervisor＋三类Worker | 父子Run、Checkpoint、网络Evidence |
+| M4确认范围 | 研究任务、进度、结果 | 任务创建与状态 | 计划、Handoff、Web Evidence | Web Provider与Report Service | Supervisor＋Business/Knowledge/Web三类Worker | 父子Run、任务租约、Checkpoint、网络Evidence |
 | M5 | 评估与演示展示 | 评估/诊断入口可选 | 评估样本合同 | Runner与指标 | Judge或真实模型评估 | 运行、指标和回归记录可选 |
 
 ## 12. 阶段完成标准
@@ -356,7 +353,7 @@ report
 
 - 检查已确认结论和待确认事项明确分离；
 - 检查M3状态仍符合统一状态枚举，且没有提前创建空M3目录；
-- 检查M4没有提前创建阶段目录或伪装成已确认正式方案；
+- 检查M4已创建阶段入口与正式方案，但阶段状态仍为`待开始`且没有运行代码；
 - 检查M4不再以M3为前置条件；
 - 检查总体设计原始路线仍被保留并链接到本文；
 - 检查总进度看板同步当前跨阶段决策；
@@ -367,6 +364,6 @@ report
 
 ## 15. 下一动作
 
-当前开发顺序不变：等待用户单独授权M2-21.1核心合同。M2每个小步骤继续按已确认方案独立开发和验证。
+当前先向用户讲清整个M2-21；用户确认理解后，仍需单独授权M2-21.1。M2每个小步骤继续独立开发和验证。
 
-M2收口后，再基于本文第8.6节讨论M4档位，形成独立的M4正式阶段方案。没有完成该讨论和确认前，不创建M4运行代码、不新增Tavily Tool，也不修改简历声称M4已经完成。
+M4推荐版正式方案已经确认，但阶段仍为`待开始`。M2收口后先按M2实际合同复核M4-01输入输出，再向用户申请单步授权；在此之前不创建M4运行代码、不新增Tavily Tool，也不修改简历声称M4已经完成。

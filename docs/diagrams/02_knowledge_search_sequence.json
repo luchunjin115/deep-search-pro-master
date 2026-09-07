@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "M2 知识检索真实调用时序",
+    "locale": "zh-CN",
+    "output": "docs/diagrams/02_knowledge_search_sequence.html",
+    "viewBox": [1350, 680],
+    "animation": "none",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "views": [
+      {
+        "id": "trusted-entry",
+        "label": "可信入口与 Harness 门禁",
+        "focus": ["caller", "tool", "harness"],
+        "note": "内部调用先核对绑定身份，再由 Harness 检查 Registry、预算、权限和 Trace。"
+      },
+      {
+        "id": "authorized-retrieval",
+        "label": "权限前置混合检索与精排",
+        "focus": ["search_service", "retrieval", "providers", "postgres"],
+        "note": "Dense 与 Lexical 只在当前获权、未删除且 active 的 Chunk 中召回，随后 RRF 合并并精排。"
+      },
+      {
+        "id": "context-evidence",
+        "label": "Context 与 Evidence 闭环",
+        "focus": ["search_service", "context_builder", "postgres", "harness", "tool", "caller"],
+        "note": "Context Builder 重新获权并限制最多 12 条；Context、Evidence 与 Tool 关联原子保存后才返回。"
+      }
+    ]
+  },
+  "participants": [
+    {
+      "id": "caller",
+      "type": "external",
+      "label": "内部调用方"
+    },
+    {
+      "id": "tool",
+      "type": "backend",
+      "label": "Knowledge Tool"
+    },
+    {
+      "id": "harness",
+      "type": "security",
+      "label": "Harness"
+    },
+    {
+      "id": "search_service",
+      "type": "backend",
+      "label": "Search Service"
+    },
+    {
+      "id": "retrieval",
+      "type": "backend",
+      "label": "Hybrid + RRF"
+    },
+    {
+      "id": "providers",
+      "type": "external",
+      "label": "BGE Provider"
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL"
+    },
+    {
+      "id": "context_builder",
+      "type": "backend",
+      "label": "Context Builder"
+    }
+  ],
+  "segments": [
+    {"from": 150, "to": 240, "label": "A. 可信执行门禁"},
+    {"from": 250, "to": 390, "label": "B. 权限前置检索与精排"},
+    {"from": 400, "to": 490, "label": "C. Context / Evidence 原子闭环"},
+    {"from": 500, "to": 585, "label": "D. 安全返回"}
+  ],
+  "messages": [
+    {
+      "id": "invoke-tool",
+      "from": "caller",
+      "to": "tool",
+      "y": 165,
+      "label": "SearchKnowledgeInput(query)",
+      "variant": "emphasis",
+      "note": "当前是内部 Tool 调用链，不代表公开聊天已经接入知识问答。"
+    },
+    {
+      "id": "bind-identity",
+      "from": "tool",
+      "to": "harness",
+      "y": 190,
+      "label": "execute_tool()",
+      "variant": "security",
+      "note": "Harness 按 Registry → 预算 → 权限 → Trace 的顺序完成门禁，并生成可信 ToolCall ID。"
+    },
+    {
+      "id": "search-with-runtime",
+      "from": "tool",
+      "to": "search_service",
+      "y": 225,
+      "label": "search(CurrentUser, query, ToolCall IDs)",
+      "variant": "emphasis",
+      "note": "Harness 门禁通过后，以 ToolExecutionContext 回调 Tool；Tool 核对绑定 CurrentUser 后才进入 Service。"
+    },
+    {
+      "id": "start-retrieval",
+      "from": "search_service",
+      "to": "retrieval",
+      "y": 260,
+      "label": "rerank(query, trusted user)",
+      "variant": "default"
+    },
+    {
+      "id": "embed-query",
+      "from": "retrieval",
+      "to": "providers",
+      "y": 290,
+      "label": "获权 active 身份后生成 BGE-M3 查询向量",
+      "variant": "default",
+      "note": "Dense 路径先从 PostgreSQL 取得当前用户获权的 active Embedding 身份，再调用 Provider。"
+    },
+    {
+      "id": "authorized-candidates",
+      "from": "retrieval",
+      "to": "postgres",
+      "y": 320,
+      "label": "ACL + 未删除 + active 后 Dense / Lexical",
+      "variant": "security"
+    },
+    {
+      "id": "rerank-candidates",
+      "from": "retrieval",
+      "to": "providers",
+      "y": 350,
+      "label": "RRF 候选送 BGE-Reranker",
+      "variant": "default"
+    },
+    {
+      "id": "ranked-windows",
+      "from": "retrieval",
+      "to": "search_service",
+      "y": 380,
+      "label": "获权 Reranker windows",
+      "variant": "return"
+    },
+    {
+      "id": "build-context",
+      "from": "search_service",
+      "to": "context_builder",
+      "y": 415,
+      "label": "构造 Context（最多 12 条）",
+      "variant": "emphasis"
+    },
+    {
+      "id": "reload-context",
+      "from": "context_builder",
+      "to": "postgres",
+      "y": 445,
+      "label": "重新获权并读取同代次 Chunk",
+      "variant": "security"
+    },
+    {
+      "id": "persist-evidence",
+      "from": "search_service",
+      "to": "postgres",
+      "y": 475,
+      "label": "原子保存 Context + Evidence + ToolContextLink",
+      "variant": "emphasis"
+    },
+    {
+      "id": "safe-result",
+      "from": "search_service",
+      "to": "harness",
+      "y": 510,
+      "label": "经 Tool 回调核对的 KnowledgeSearchOutcome",
+      "variant": "return"
+    },
+    {
+      "id": "finish-trace",
+      "from": "harness",
+      "to": "tool",
+      "y": 540,
+      "label": "校验耗时，结束 Trace，返回执行结果",
+      "variant": "return"
+    },
+    {
+      "id": "tool-envelope",
+      "from": "tool",
+      "to": "caller",
+      "y": 570,
+      "label": "ToolEnvelope + Evidence IDs（最多 12 条）",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {"participant": "tool", "from": 160, "to": 575, "type": "backend"},
+    {"participant": "harness", "from": 185, "to": 545, "type": "security"},
+    {"participant": "search_service", "from": 220, "to": 515, "type": "backend"},
+    {"participant": "retrieval", "from": 255, "to": 385, "type": "backend"},
+    {"participant": "providers", "from": 285, "to": 355, "type": "external"},
+    {"participant": "postgres", "from": 315, "to": 480, "type": "database"},
+    {"participant": "context_builder", "from": 410, "to": 450, "type": "backend"}
+  ]
+}

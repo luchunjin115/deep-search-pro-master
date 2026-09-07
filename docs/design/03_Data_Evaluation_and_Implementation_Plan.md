@@ -1,11 +1,11 @@
 # 跨境电商多 Agent 智能分析平台——数据库、模拟数据、评估与实施计划
 
-> 文档状态：已确认  
-> 版本：V1.1  
-> 数据性质：全部业务数据为演示合成数据，不代表真实Amazon经营结果  
+> 文档状态：已确认
+> 版本：V1.1
+> 数据性质：全部业务数据为演示合成数据，不代表真实Amazon经营结果
 > 实施原则：先完成可演示的垂直链路，再扩展覆盖面
 
-> 2026-09-03范围调整说明：本文件保留最初确认的完整V1路线；秋招主线现暂缓M3多模态，M4保留并调整为通用有界深度研究能力，详细程度待单独确认，M5保留Agent/RAG评估、加固与作品化。当前有效的调整方案见[`05_Autumn_Recruitment_Scope_Adjustment_Plan.md`](05_Autumn_Recruitment_Scope_Adjustment_Plan.md)。
+> 2026-09-04范围调整说明：本文件的业务数据与评估方法继续有效，但原始完整版里程碑和数量目标已被当前秋招主线取代。当前先完成M2多Agent/RAG闭环，M3多模态暂缓，M4推荐版已确认只新增Web Research Worker与一个研究Skill，M5保留评估、加固和作品化；冲突处以[`05_Autumn_Recruitment_Scope_Adjustment_Plan.md`](05_Autumn_Recruitment_Scope_Adjustment_Plan.md)、[M2入口](../progress/M2/M2_KNOWLEDGE_RAG.md)和[M4入口](../progress/M4/M4_DEEP_RESEARCH.md)为准。
 
 > 后续已记录但尚未实施的“公开商品字段 + 合成运营字段”扩充与跨电脑恢复方案，见 [04_Public_Dataset_Expansion_and_Migration_Plan.md](04_Public_Dataset_Expansion_and_Migration_Plan.md)。在该方案完成正式确认和验证前，本文件的现有合成数据基线继续有效。
 
@@ -226,7 +226,7 @@ embedding vector(1024), embedding_model, embedding_version
 | evidences | 统一证据 |
 | claims | 最终回答或报告中的结论 |
 | claim_evidences | 结论与证据多对多关系 |
-| reports | Markdown/PDF文件与版本 |
+| reports | Markdown结果、版本与Artifact引用；PDF不在当前M4范围 |
 | feedback | 用户反馈和Bad Case标签 |
 
 原始模型输入输出不无限期完整保存；按配置做脱敏、截断或只保存哈希和必要审计字段。
@@ -550,20 +550,19 @@ LLM Judge不能作为唯一判定。首批至少20%的样本由人工复核，�
 - qwen3.8-max适配器；
 - 安全库存/规格查询；
 - 自建RAG：解析、pgvector、混合检索、Reranker、引用；
-- 商品图片结构化理解；
-- LangGraph快速路径与深度任务；
+- Capability驱动的Agent Gateway、Supervisor与Business/Knowledge Worker；
 - 分阶段Harness：上下文、权限、工具策略、预算、追踪、恢复和评估钩子；
-- 5个可版本化业务Skill及渐进式加载；
-- Tavily网络工具；
+- M4两个受控Web Tool、Fake/Tavily Provider和Web Research Worker；
+- 一个`cross-border-market-research`可版本化Skill；
 - Evidence层；
 - 聊天工作台、任务过程和证据面板；
-- Markdown/PDF报告；
+- Markdown研究结果；
 - 最小评估集和运行报告；
 - Docker Compose与演示说明。
 
 ### 9.2 P1：工程增强
 
-- Celery任务恢复完整覆盖；
+- 真实压测证明有必要后再评估独立任务队列；
 - 模型/搜索缓存；
 - qwen3.7-flash任务降本；
 - 更完整报表图表；
@@ -600,7 +599,7 @@ MCP属于P2扩展，不作为“技术越多越有含金量”的堆栈项。只
 工作内容：
 
 - 建立新目录和配置；
-- Docker Compose启动PostgreSQL和Redis；
+- Docker Compose启动PostgreSQL/pgvector；
 - Alembic迁移；
 - 生成用户、产品、仓库和库存基础数据；
 - 接入qwen3.8-max；
@@ -620,11 +619,14 @@ MCP属于P2扩展，不作为“技术越多越有含金量”的堆栈项。只
 - 引用面板；
 - RAG最小评估集；
 - 实现`search_knowledge`、`get_evidence_detail`、`read_uploaded_file`三个Tool；
-- 收集供应商报价分析的输入、输出和边界，暂不实现完整Skill运行时。
+- 实现Capability驱动的Agent Gateway、Supervisor、Business/Knowledge Worker、统一Answer Provider、记忆/Checkpoint和现有聊天入口迁移；
+- 完成最小评估、前端引用展示和整体验收。
 
 演示结果：上传产品说明书后，可以基于文档回答并定位页码。
 
 ### 里程碑M3：多模态商品分析
+
+当前秋招主线暂缓；以下内容保留为未来候选，不是M4或M5的前置条件：
 
 - 图片上传；
 - Base64调用qwen3.8-max；
@@ -640,21 +642,21 @@ MCP属于P2扩展，不作为“技术越多越有含金量”的堆栈项。只
 
 ### 里程碑M4：深度研究与报告
 
-- LangGraph Supervisor和Workers；
-- Tavily与网络Evidence；
-- 并行子任务；
-- Pandas指标与图表；
-- Checkpoint、失败重试；
-- Markdown/PDF报告；
-- 实现剩余研究与分析Tool，使V1 Agent Tool总数约13个；
-- 落地`supplier-quote-analysis`、`inventory-risk-analysis`、`amazon-eu-market-research`和`evidence-based-report-writing`四个Skill；
-- Tool最终权限由“Skill申请、Worker范围、用户角色、系统策略”的交集决定。
+- 复用M2 Supervisor、Business/Knowledge Worker、Answer Provider和Citation Validator；
+- 只新增Web Research Worker；
+- 实现`search_public_web`、`read_public_source`与Fake/Tavily Provider；
+- 建立正文Web Evidence、来源去重/冲突和网页注入防护；
+- 先顺序、后独立只读Worker有界并行；
+- 使用PostgreSQL父子Run、任务租约与Checkpoint恢复，不引入Redis/Celery；
+- 落地`cross-border-market-research`一个Skill与Markdown Service；
+- 完成任务API、前端进度/Evidence和真实Tavily/Qwen验收；
+- 不做Pandas复杂分析、图表、PDF或独立Analysis/Report Worker。
 
-演示结果：完成德国、法国蘑菇灯选品报告，结论关联多类证据。
+演示结果：完成数据库、内部文档和公开网页三类Evidence的通用有界研究；德国、法国蘑菇灯只是Golden Scenario，不是硬编码逻辑。
 
 ### 里程碑M5：评估与作品化
 
-- 150条首批评估集；
+- 根据M2/M4最终能力冻结约80至120条高价值样本，最终规模在M5正式方案确认；
 - 自动评估Runner；
 - 安全、权限和故障注入；
 - 性能与成本记录；
@@ -702,7 +704,7 @@ MCP属于P2扩展，不作为“技术越多越有含金量”的堆栈项。只
 
 - 可运行代码和Docker Compose；
 - 三份设计文档和ADR；
-- 5个业务Skill定义、版本记录和对应评估样例；
+- `cross-border-market-research` Skill定义、版本记录和对应评估样例；
 - Harness运行策略、工具注册表和审计轨迹示例；
 - ER图、Agent状态图、RAG流程图；
 - 合成数据生成器和数据字典；
@@ -718,22 +720,22 @@ MCP属于P2扩展，不作为“技术越多越有含金量”的堆栈项。只
 
 ```text
 1. 以Amazon运营身份登录
-2. 询问德国仓库存，展示快速路径和数据库证据
-3. 上传蘑菇灯图片，展示视觉属性与未知项
-4. 上传供应商报价，展示成本计算
-5. 查询内部合规文档，展示RAG引用
-6. 发起德国/法国选品报告
-7. 展示多Agent任务步骤、网络证据、图表和PDF
-8. 切换受限账号，证明敏感成本和文档不可见
-9. 展示评估看板或基线报告
-10. 展示一次故障恢复或Bad Case优化对比
+2. 在统一聊天入口询问德国仓库存，展示Business Worker自主Tool选择和数据库Evidence
+3. 查询内部文档，展示Knowledge Worker、混合检索、Reranker和引用
+4. 提出跨数据库与文档的问题，展示Supervisor、Handoff和两类Evidence
+5. 提供歧义请求并补充信息，展示短期记忆、Checkpoint和恢复
+6. 发起数据库＋内部文档＋公开网页的M4研究任务
+7. 展示多Agent步骤、Web正文Evidence、部分失败和Markdown结果
+8. 切换受限账号，证明业务数据和文档不可越权
+9. 展示Agent/RAG评估与性能成本基线
+10. 展示一次故障恢复或Bad Case优化前后对比
 ```
 
 ## 15. 简历表达参考
 
 项目完成且指标真实后，可表达为：
 
-> 设计并实现面向Amazon欧洲站的多模态多Agent研究平台，基于LangGraph编排千问推理、企业数据库、互联网搜索和自建RAG；将复杂业务流程封装为可版本化Skill，并通过Harness实施工具权限交集、执行预算、审计和故障恢复；使用PostgreSQL/pgvector、BGE-M3与Reranker实现权限感知混合检索和证据引用，构建合成经营数据与分层评估集，并支持可下载报告。
+> 设计并实现面向跨境电商场景的权限感知多Agent研究平台，基于LangGraph编排千问、企业数据库、自建RAG与受控互联网检索；通过Capability Resolver、结构化Handoff和Harness实现Worker工具隔离、树形预算、审计与Checkpoint恢复；使用PostgreSQL/pgvector、BGE-M3与Reranker实现权限前置混合检索和可验证引用，并以分层评估、故障矩阵和性能成本数据验证完整应用闭环。
 
 指标必须替换为实际评估结果，不得提前在简历中填写本文暂定目标。
 

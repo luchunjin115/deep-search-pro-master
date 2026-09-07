@@ -1,0 +1,343 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Deep Search Pro 当前项目框架",
+    "locale": "zh-CN",
+    "output": "01_current_architecture.html",
+    "quality_profile": "showcase",
+    "animation": "none",
+    "repository": {
+      "url": "https://github.com/luchunjin115/deep-search-pro-master",
+      "revision": "86fe991fce33b784f68abe8e135fe09b55599ab9"
+    },
+    "views": [
+      {
+        "id": "public-inventory-path",
+        "label": "当前公开库存主路径",
+        "focus": [
+          "frontend",
+          "api",
+          "inventory_graph",
+          "harness",
+          "tools",
+          "services",
+          "postgres"
+        ],
+        "note": "公开聊天仍由 M1 InventoryQueryAgent 执行，尚未迁移到 Agent Gateway。"
+      },
+      {
+        "id": "m2-knowledge-foundation",
+        "label": "M2 知识底座",
+        "focus": [
+          "api",
+          "tools",
+          "services",
+          "rag_pipeline",
+          "postgres",
+          "local_storage",
+          "providers"
+        ],
+        "note": "上传、解析、索引、检索和知识 Tool 已实现，但尚无公开知识聊天入口。"
+      },
+      {
+        "id": "trusted-runtime",
+        "label": "服务端可信执行边界",
+        "focus": ["api", "harness", "tools", "services"],
+        "note": "模型只提出业务行动；身份、权限、预算、超时和审计由服务端掌握。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "frontend",
+      "type": "frontend",
+      "label": "Next.js 前端",
+      "sublabel": "库存证据工作台",
+      "tag": "当前 M1 UI",
+      "pos": [20, 220],
+      "size": [140, 72],
+      "sources": [
+        {"path": "frontend/components/inventory-workbench.tsx", "label": "页面交互"},
+        {"path": "frontend/lib/api.ts", "label": "HTTP 客户端"}
+      ]
+    },
+    {
+      "id": "api",
+      "type": "security",
+      "label": "FastAPI + Auth/Schema",
+      "sublabel": "Routes / CurrentUser",
+      "tag": "可信请求边界",
+      "pos": [190, 220],
+      "size": [160, 72],
+      "sources": [
+        {"path": "app/main.py", "label": "应用入口"},
+        {"path": "app/api/routers/threads.py", "label": "聊天路由"},
+        {"path": "app/schemas/common.py", "label": "公共合同"}
+      ]
+    },
+    {
+      "id": "inventory_graph",
+      "type": "backend",
+      "label": "M1 InventoryQueryAgent",
+      "sublabel": "当前公开聊天 LangGraph",
+      "tag": "5 节点固定图",
+      "pos": [380, 220],
+      "size": [165, 72],
+      "sources": [
+        {"path": "app/agents/graphs/inventory_query.py", "label": "库存执行图"},
+        {"path": "app/agents/state.py", "label": "M1 状态"}
+      ]
+    },
+    {
+      "id": "harness",
+      "type": "security",
+      "label": "Harness Runtime",
+      "sublabel": "RunContext / 权限 / 预算 / Trace",
+      "tag": "最终否决权",
+      "pos": [575, 220],
+      "size": [165, 72],
+      "sources": [
+        {"path": "app/runtime/context.py", "label": "可信身份"},
+        {"path": "app/runtime/budget.py", "label": "执行预算"},
+        {"path": "app/runtime/executor.py", "label": "执行护栏"}
+      ]
+    },
+    {
+      "id": "tools",
+      "type": "backend",
+      "label": "Tool Registry 与适配器",
+      "sublabel": "M1 2 个 / M2 累计 5 个",
+      "tag": "模型不能直连数据",
+      "pos": [770, 220],
+      "size": [165, 72],
+      "sources": [
+        {"path": "app/tools/registry.py", "label": "白名单元数据"},
+        {"path": "app/tools/search_inventory.py", "label": "库存 Tool"},
+        {"path": "app/tools/search_knowledge.py", "label": "知识 Tool"}
+      ]
+    },
+    {
+      "id": "services",
+      "type": "backend",
+      "label": "Services + Repositories",
+      "sublabel": "业务规则 / ACL / 事务 / 数据映射",
+      "tag": "可信数据访问",
+      "pos": [965, 220],
+      "size": [180, 72],
+      "sources": [
+        {"path": "app/services/knowledge.py", "label": "知识检索编排"},
+        {"path": "app/repositories/retrieval.py", "label": "权限前置召回"},
+        {"path": "app/services/evidence.py", "label": "Evidence 服务"}
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL + pgvector",
+      "sublabel": "业务 / ACL / Chunk / Evidence",
+      "tag": "主要事实存储",
+      "pos": [820, 430],
+      "size": [180, 72],
+      "sources": [
+        {"path": "app/db/session.py", "label": "数据库运行时"},
+        {"path": "app/models/knowledge.py", "label": "知识模型"},
+        {"path": "migrations/env.py", "label": "迁移运行入口"}
+      ]
+    },
+    {
+      "id": "providers",
+      "type": "external",
+      "label": "可替换 Provider 层",
+      "sublabel": "Qwen / BGE-M3 / Reranker / Docling",
+      "tag": "真实 Smoke 显式运行",
+      "pos": [300, 430],
+      "size": [190, 72],
+      "sources": [
+        {"path": "app/llm/qwen.py", "label": "Qwen Provider"},
+        {"path": "app/services/retrieval/embedding.py", "label": "Embedding"},
+        {"path": "app/services/retrieval/reranker_provider.py", "label": "Reranker"}
+      ]
+    },
+    {
+      "id": "rag_pipeline",
+      "type": "backend",
+      "label": "M2 自建 RAG Pipeline",
+      "sublabel": "解析→分块→检索→重排→Context",
+      "tag": "已实现底座",
+      "pos": [560, 430],
+      "size": [190, 72],
+      "sources": [
+        {"path": "app/services/documents/indexing/service.py", "label": "文档索引"},
+        {"path": "app/services/retrieval/hybrid.py", "label": "Hybrid + RRF"},
+        {"path": "app/services/retrieval/context.py", "label": "Context Builder"}
+      ]
+    },
+    {
+      "id": "local_storage",
+      "type": "database",
+      "label": "LocalStorage",
+      "sublabel": "上传文件与 Artifact",
+      "tag": "Storage 接口封装",
+      "pos": [1020, 430],
+      "size": [160, 72],
+      "sources": [
+        {"path": "app/services/storage/base.py", "label": "Storage 接口"},
+        {"path": "app/services/storage/local.py", "label": "本地实现"}
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "浏览器：不可信用户输入",
+      "wraps": ["frontend"],
+      "pad": 18
+    },
+    {
+      "kind": "security-group",
+      "label": "FastAPI 服务端可信执行边界",
+      "wraps": [
+        "api",
+        "inventory_graph",
+        "harness",
+        "tools",
+        "services",
+        "rag_pipeline"
+      ],
+      "pad": 28
+    },
+    {
+      "kind": "region",
+      "label": "持久化边界",
+      "wraps": ["postgres", "local_storage"],
+      "pad": 24
+    }
+  ],
+  "connections": [
+    {
+      "id": "frontend_to_api",
+      "from": "frontend",
+      "to": "api",
+      "label": "HTTPS / JSON",
+      "variant": "emphasis",
+      "labelAt": [175, 306]
+    },
+    {
+      "id": "api_to_graph",
+      "from": "api",
+      "to": "inventory_graph",
+      "label": "JWT/Schema 校验后进入公开聊天",
+      "variant": "emphasis",
+      "labelAt": [365, 306]
+    },
+    {
+      "id": "graph_to_harness",
+      "from": "inventory_graph",
+      "to": "harness",
+      "label": "受控模型与 Tool 执行",
+      "variant": "security",
+      "labelAt": [560, 206]
+    },
+    {
+      "id": "harness_to_tools",
+      "from": "harness",
+      "to": "tools",
+      "label": "白名单、权限、预算通过后调用",
+      "variant": "security",
+      "labelAt": [755, 306]
+    },
+    {
+      "id": "tools_to_services",
+      "from": "tools",
+      "to": "services",
+      "label": "严格业务参数 + 可信身份",
+      "labelAt": [950, 206]
+    },
+    {
+      "id": "services_to_postgres",
+      "from": "services",
+      "to": "postgres",
+      "label": "SQL / FTS / vector",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [1020, 390]
+    },
+    {
+      "id": "graph_to_provider",
+      "from": "inventory_graph",
+      "to": "providers",
+      "label": "Qwen 结构化 Tool 建议",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [500, 360]
+    },
+    {
+      "id": "api_to_services_direct",
+      "from": "api",
+      "to": "services",
+      "label": "文件/文档 API 直接调用 Service",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [[270, 110], [1055, 110]],
+      "labelAt": [665, 100]
+    },
+    {
+      "id": "services_to_rag",
+      "from": "services",
+      "to": "rag_pipeline",
+      "label": "知识检索固定编排",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [820, 340]
+    },
+    {
+      "id": "rag_to_repositories",
+      "from": "rag_pipeline",
+      "to": "postgres",
+      "label": "获权 Chunk 与 Evidence",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [785, 516]
+    },
+    {
+      "id": "rag_to_storage",
+      "from": "rag_pipeline",
+      "to": "local_storage",
+      "label": "文件与 Artifact",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [[655, 580], [1100, 580]],
+      "labelAt": [900, 570]
+    },
+    {
+      "id": "rag_to_providers",
+      "from": "rag_pipeline",
+      "to": "providers",
+      "label": "解析、Embedding 与 Rerank",
+      "fromSide": "left",
+      "toSide": "right",
+      "labelAt": [505, 516]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "当前运行边界",
+      "items": [
+        "公开聊天只经过 M1 InventoryQueryAgent，并返回数据库 Evidence。",
+        "M2 知识底座与 3 个 Tool 已完成，但尚未进入公开聊天。"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "可信与阶段边界",
+      "items": [
+        "模型不能构造 RunContext、权限或真实预算；Harness 拥有最终否决权。",
+        "M2-21.1 只有合同而无 Supervisor/Worker；Context/Evidence 每次最多 12 条。"
+      ]
+    }
+  ]
+}

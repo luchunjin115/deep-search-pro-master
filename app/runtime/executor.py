@@ -16,7 +16,7 @@ from app.core.errors import (
     ToolNotAllowedError,
     ToolTimeoutError,
 )
-from app.runtime.budget import ExecutionBudget
+from app.runtime.budget import ExecutionBudgetProtocol
 from app.runtime.context import RunContext
 from app.runtime.permissions import PermissionGuard
 from app.runtime.trace import (
@@ -59,7 +59,7 @@ class HarnessExecutor:
         *,
         context: RunContext,
         run: RunTrace,
-        budget: ExecutionBudget,
+        budget: ExecutionBudgetProtocol,
         registry: ToolRegistry,
         permission_guard: PermissionGuard,
         trace_recorder: TraceRecorder,

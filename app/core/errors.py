@@ -652,6 +652,65 @@ class TracePersistenceError(ApplicationError):
         )
 
 
+class AgentRuntimePersistenceError(ApplicationError):
+    """Engineered Agent state could not be persisted or verified safely."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "INTERNAL_ERROR",
+            "多Agent运行状态保存失败",
+            retryable=True,
+        )
+
+
+class AgentCheckpointConflictError(ApplicationError):
+    """A caller attempted to overwrite a newer immutable checkpoint."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "VALIDATION_ERROR",
+            "Agent检查点版本已变化，请重新读取后再保存",
+            retryable=True,
+            field="checkpoint_version",
+        )
+
+
+class AgentCheckpointNotFoundError(ApplicationError):
+    """No checkpoint exists inside the exact trusted identity boundary."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "VALIDATION_ERROR",
+            "未找到可恢复的Agent检查点",
+            retryable=False,
+            field="root_run_id",
+        )
+
+
+class AgentTaskConflictError(ApplicationError):
+    """A Worker tried to replace a newer shared task-board state."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "VALIDATION_ERROR",
+            "Agent任务状态已变化，请重新读取后再提交结果",
+            retryable=True,
+            field="task_version",
+        )
+
+
+class AgentRequestConflictError(ApplicationError):
+    """Another request already owns the active root or this retry is unfinished."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "AGENT_RUN_CONFLICT",
+            "该会话已有正在处理的Agent请求，请稍后使用同一request_id重试",
+            retryable=True,
+            field="request_id",
+        )
+
+
 ProviderErrorReason = Literal[
     "unsupported_question",
     "timeout",
@@ -719,5 +778,16 @@ class ProviderOutputError(ProviderError):
         super().__init__(
             "invalid_output",
             "模型返回的Tool调用建议格式无效",
+            retryable=False,
+        )
+
+
+class AgentProviderOutputError(ProviderError):
+    """An Agent model response failed its strict structured contract."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "invalid_output",
+            "模型返回的Agent结构化结果无效",
             retryable=False,
         )

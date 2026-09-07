@@ -32,6 +32,7 @@ from app.schemas.context import (
 )
 from app.schemas.evidence import (
     DocumentEvidenceDetail,
+    DocumentEvidenceSummary,
     EvidenceAccessScope,
     EvidenceDetail,
     EvidenceSummary,
@@ -568,3 +569,41 @@ class EvidenceQueryService:
                 self.get_detail(user, evidence_id) for evidence_id in evidence_ids
             )
         ]
+
+    def get_agent_summaries(
+        self,
+        user: CurrentUser,
+        evidence_ids: list[UUID],
+    ) -> list[EvidenceSummary | DocumentEvidenceSummary]:
+        """Reauthorize and summarize the mixed Evidence set of one Agent answer."""
+
+        summaries: list[EvidenceSummary | DocumentEvidenceSummary] = []
+        for evidence_id in evidence_ids:
+            detail = self.get_tool_detail(
+                user,
+                GetEvidenceDetailInput(evidence_id=evidence_id),
+            ).detail
+            if isinstance(detail, EvidenceDetail):
+                summaries.append(
+                    EvidenceSummary(
+                        id=detail.id,
+                        source_type=detail.source_type,
+                        source_name=detail.source_name,
+                        title=detail.title,
+                        excerpt=detail.excerpt,
+                        observed_at=detail.observed_at,
+                        synthetic_data=True,
+                    )
+                )
+            else:
+                summaries.append(
+                    DocumentEvidenceSummary(
+                        id=detail.id,
+                        source_type=detail.source_type,
+                        title=detail.title,
+                        excerpt=detail.excerpt,
+                        observed_at=detail.observed_at,
+                        synthetic_data=True,
+                    )
+                )
+        return summaries

@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Annotated, Literal, TypeAlias
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field, StringConstraints
+from pydantic import AwareDatetime, Field, StringConstraints, model_validator
 
 from app.schemas.common import SKU, M1Schema, MarketCode, ProductQuery, WarehouseCode
 from app.schemas.context import CitationLabel
@@ -141,3 +141,30 @@ class GetEvidenceDetailResult(M1Schema):
         """Return the verified ID used by the success ToolEnvelope."""
 
         return self.detail.id
+
+
+class AnswerEvidenceReference(M1Schema):
+    """One stable final-answer label mapped to one opaque Evidence ID."""
+
+    citation_label: CitationLabel
+    evidence_id: UUID
+
+
+class AnswerEvidenceMapping(M1Schema):
+    """The ordered, bounded Evidence set persisted for one root Agent run."""
+
+    root_run_id: UUID
+    references: list[AnswerEvidenceReference] = Field(max_length=12)
+
+    @model_validator(mode="after")
+    def validate_order_and_identity(self) -> AnswerEvidenceMapping:
+        evidence_ids = [reference.evidence_id for reference in self.references]
+        if len(evidence_ids) != len(set(evidence_ids)):
+            raise ValueError("Evidence ID 不能重复")
+        expected_labels = [
+            f"[E{ordinal}]" for ordinal in range(1, len(self.references) + 1)
+        ]
+        actual_labels = [reference.citation_label for reference in self.references]
+        if actual_labels != expected_labels:
+            raise ValueError("Evidence 引用标签必须从 [E1] 开始连续排列")
+        return self

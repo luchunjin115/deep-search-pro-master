@@ -26,6 +26,25 @@ class ConversationStore(Protocol):
         self, *, tenant_id: UUID, thread_id: UUID, role: str, content: str
     ) -> Message: ...
 
+    def find_owned_message(
+        self,
+        *,
+        tenant_id: UUID,
+        user_id: UUID,
+        thread_id: UUID,
+        message_id: UUID,
+    ) -> Message | None: ...
+
+    def add_message_once(
+        self,
+        *,
+        message_id: UUID,
+        tenant_id: UUID,
+        thread_id: UUID,
+        role: str,
+        content: str,
+    ) -> Message: ...
+
 
 class ConversationService:
     """Enforce user ownership before a thread reaches RunContext or the graph."""
@@ -77,5 +96,39 @@ class ConversationService:
                 role=role,
                 content=content,
             )
+        except SQLAlchemyError:
+            raise ConversationPersistenceError from None
+
+    def add_message_once(
+        self,
+        user: CurrentUser,
+        thread_id: UUID,
+        *,
+        message_id: UUID,
+        role: str,
+        content: str,
+    ) -> Message:
+        """Insert one deterministic request message, or return its exact replay."""
+
+        try:
+            existing = self._repository.find_owned_message(
+                tenant_id=user.tenant_id,
+                user_id=user.user_id,
+                thread_id=thread_id,
+                message_id=message_id,
+            )
+            if existing is not None:
+                if existing.role != role or existing.content_summary != content:
+                    raise ConversationPersistenceError
+                return existing
+            return self._repository.add_message_once(
+                message_id=message_id,
+                tenant_id=user.tenant_id,
+                thread_id=thread_id,
+                role=role,
+                content=content,
+            )
+        except ConversationPersistenceError:
+            raise
         except SQLAlchemyError:
             raise ConversationPersistenceError from None

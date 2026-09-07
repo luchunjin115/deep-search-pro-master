@@ -8,7 +8,11 @@ from sqlalchemy import engine_from_config, pool
 from app.core.config import Settings
 from app.db.base import Base
 from app.models import (
+    AgentAnswerEvidence,
+    AgentCheckpoint,
     AgentRun,
+    AgentTaskDependency,
+    AgentTaskRecord,
     Document,
     DocumentAcl,
     DocumentChunk,
@@ -50,6 +54,10 @@ _models = (
     Thread,
     Message,
     AgentRun,
+    AgentTaskRecord,
+    AgentTaskDependency,
+    AgentCheckpoint,
+    AgentAnswerEvidence,
     ToolCall,
     Evidence,
     StoredFile,

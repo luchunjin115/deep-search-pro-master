@@ -284,6 +284,7 @@ def test_chat_contract_rejects_empty_message_and_unknown_sql_field() -> None:
 def test_chat_success_response_contains_execution_and_evidence_summary() -> None:
     trace_id = uuid4()
     response = ChatSuccessResponse(
+        request_id=uuid4(),
         thread_id=uuid4(),
         message_id=uuid4(),
         answer="德国仓蘑菇灯可售库存为125件。",

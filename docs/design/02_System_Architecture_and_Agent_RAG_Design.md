@@ -1,8 +1,10 @@
 # 跨境电商多 Agent 智能分析平台——系统架构与 Agent/RAG 技术设计
 
-> 文档状态：已确认  
-> 版本：V1.1  
+> 文档状态：已确认
+> 版本：V1.2
 > 约束：本地开发部署、合成业务数据、千问负责推理与多模态、自建 RAG、V1 使用本地文件存储
+>
+> 2026-09-04范围同步：当前秋招主线为 M2 多 Agent/RAG 闭环 → M4 通用有界深度研究 → M5 评估作品化，M3 多模态暂缓。M4 已确认只新增 Web Research Worker，固定分析与 Markdown 格式化由 Service 完成，V1 不引入 Redis/Celery。M2-21 最新实施顺序已经用户确认，当前处于整体实施前讲解、尚未授权 M2-21.1；分别以[秋招范围方案](05_Autumn_Recruitment_Scope_Adjustment_Plan.md)、[M2-21唯一记录](../progress/M2/records/M2_21_ENGINEERED_MULTI_AGENT_PLAN.md)和[M4正式方案](../progress/M4/records/M4_00_STAGE_PLAN.md)为准。
 
 ## 1. 架构目标
 
@@ -27,51 +29,46 @@
 | ADR-008 | 业务数据库 | PostgreSQL，与向量和元数据统一管理 |
 | ADR-009 | 网络搜索 | Tavily，通过自定义 Provider 接口调用 |
 | ADR-010 | 文件存储 | V1本地目录 + Storage抽象，不部署MinIO |
-| ADR-011 | 异步任务 | Celery + Redis，LangGraph负责流程状态 |
-| ADR-012 | 前后端 | Next.js + FastAPI，SSE为主、WebSocket可选 |
+| ADR-011 | 长任务 | V1使用应用内有界执行器＋PostgreSQL任务/租约/Checkpoint；不引入Redis/Celery |
+| ADR-012 | 前后端 | Next.js + FastAPI；聊天先同步HTTP，M4任务状态先轮询，SSE按真实体验需求后续评估 |
 | ADR-013 | 数据操作 | V1 Agent只允许只读业务查询 |
 | ADR-014 | 评估 | 自建分层评估集，指标与回归测试进入代码仓库 |
-| ADR-015 | Skill边界 | V1规划5个业务Skill，简单原子操作不封装为Skill |
-| ADR-016 | Tool边界 | V1目标约13个Agent Tool，单个Agent按任务只获得1至5个 |
+| ADR-015 | Skill边界 | 当前秋招主线只确认M4一个`cross-border-market-research` Skill；简单原子操作不封装为Skill |
+| ADR-016 | Tool边界 | 不以数量为目标，只实现闭环需要的单一职责Tool；单个Agent按任务只获得1至5个 |
 | ADR-017 | Harness | 作为运行时护栏逐阶段建设，不设计成新的Agent角色 |
 | ADR-018 | MCP | V1不引入；内部能力先使用直接Python接口，外部连接器后续评估 |
 
 ## 3. 总体架构
 
 ```text
-┌──────────────────────────────────────────────────────────────────┐
-│ Next.js Web                                                       │
-│ 聊天工作台 │ 任务中心 │ 企业数据 │ 知识库 │ 报告 │ 管理设置       │
-└──────────────────────────────┬───────────────────────────────────┘
-                               │ HTTPS / SSE
-┌──────────────────────────────▼───────────────────────────────────┐
-│ FastAPI API层                                                     │
-│ Auth/RBAC │ 会话 │ 文件 │ 任务 │ 报告 │ 反馈 │ 输入校验与限流    │
-└───────────────┬──────────────────────────────┬───────────────────┘
-                │同步快速查询                   │异步长任务
-                ▼                               ▼
-┌──────────────────────────────┐   ┌───────────────────────────────┐
-│ LangGraph Runtime            │   │ Celery Worker                 │
-│ Router / Fast Path           │   │ LangGraph Deep Task          │
-│ Skill选择 / Tool Loop        │   │ 文件解析 / 索引 / 报告        │
-└───────────────┬──────────────┘   └──────────────┬────────────────┘
-                └─────────────────────┬────────────┘
-                                      ▼
-┌──────────────────────────────────────────────────────────────────┐
-│ Harness运行时护栏                                                 │
-│ 上下文 │ 权限 │ 工具白名单 │ 预算/超时 │ Checkpoint │ 证据/审计    │
-└──────────────────────────────────┬───────────────────────────────┘
-                                   ▼
-┌──────────────────────────────────────────────────────────────────┐
-│ Skill、Tool与确定性Service                                        │
-│ Business DB │ RAG │ Tavily │ File │ Pandas │ Vision │ Report     │
-└───────────┬──────────────┬──────────────┬───────────────┬────────┘
-            ▼              ▼              ▼               ▼
-┌──────────────────┐ ┌──────────┐ ┌────────────┐ ┌────────────────┐
-│ PostgreSQL       │ │ Redis    │ │ Local Data │ │ 外部API        │
-│ 业务/RBAC/向量/  │ │ 队列/缓存 │ │ 原文件/报告 │ │ Qwen/Tavily    │
-│ 会话/证据/追踪   │ │          │ │            │ │                │
-└──────────────────┘ └──────────┘ └────────────┘ └────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│ Next.js Web：统一聊天 │ 知识库 │ M4任务进度/结果 │ Evidence        │
+└───────────────────────────────┬────────────────────────────────────┘
+                                │ HTTPS；M4首版状态轮询
+┌───────────────────────────────▼────────────────────────────────────┐
+│ FastAPI：Auth/RBAC │ 同一聊天入口 │ 文件/索引 │ 任务状态          │
+└───────────────────────────────┬────────────────────────────────────┘
+                                ▼
+┌────────────────────────────────────────────────────────────────────┐
+│ Agent Gateway + Planner + Capability Resolver                      │
+│ L0直接回答 │ L1单Worker │ L2 Supervisor多Worker │ M4持久研究任务    │
+└───────────────────────────────┬────────────────────────────────────┘
+                                ▼
+┌────────────────────────────────────────────────────────────────────┐
+│ 统一Agent/Worker Runtime + Harness                                  │
+│ 身份 │ 权限 │ 白名单 │ 树形预算/终止 │ Trace │ Checkpoint │ Evidence│
+└───────────────────────────────┬────────────────────────────────────┘
+                                ▼
+┌────────────────────────────────────────────────────────────────────┐
+│ Business/Knowledge/Web Worker → Tool → 确定性Service/Repository    │
+│ M4长任务：应用内有界执行器领取PostgreSQL任务租约                    │
+└───────────────┬──────────────────┬───────────────────┬─────────────┘
+                ▼                  ▼                   ▼
+┌──────────────────────┐ ┌──────────────────┐ ┌──────────────────────┐
+│ PostgreSQL + pgvector│ │ Local Storage    │ │ 外部Provider         │
+│ 业务/文档/任务/证据/ │ │ 上传/解析产物/   │ │ Qwen / Tavily        │
+│ Run/Trace/Checkpoint │ │ Markdown结果     │ │                      │
+└──────────────────────┘ └──────────────────┘ └──────────────────────┘
 ```
 
 ## 4. 代码模块边界
@@ -90,8 +87,8 @@ app/
 │   ├── documents/       # 文件解析、清洗、分块
 │   ├── retrieval/       # 混合检索、重排、Context
 │   ├── evidence/        # 证据规范化与引用
-│   ├── analysis/        # Pandas分析与图表
-│   └── reports/         # Markdown/PDF生成
+│   ├── analysis/        # 首版仅放确定性计算，不包装成Worker
+│   └── reports/         # Markdown确定性格式化
 ├── llm/
 │   ├── provider.py      # LLM/Vision统一接口
 │   ├── qwen.py
@@ -105,7 +102,7 @@ app/
 │   ├── workers/
 │   ├── graphs/
 │   └── runtime/         # Harness：上下文、策略、预算、追踪和Skill加载
-├── workers/             # Celery任务
+├── workers/             # M4应用内有界任务执行器（非Celery）
 └── evals/               # 数据集、Runner、指标、报告
 
 frontend/
@@ -126,16 +123,11 @@ data/
 
 ## 5. Agent设计
 
-### 5.1 为什么不是所有请求都走多 Agent
+### 5.1 统一入口不等于每次都启动多个 Agent
 
-“蘑菇灯库存是多少”只需要一次权限检查和数据库查询。若强制经过规划、多个Worker和报告Agent，将导致：
+最终公开聊天统一经过轻量 Agent Gateway 和 Capability Resolver，但按任务复杂度选择成本不同的路径：L0直接回答，L1只启动一个专业Worker，L2才由Supervisor协调多个Worker。这样库存问题也完成目标理解和能力选择，却不会为了展示多Agent而启动无关角色。
 
-- 响应变慢；
-- Token成本增加；
-- 错误面扩大；
-- 调试变困难。
-
-只有路径不固定、需要三类以上数据源或需要报告产物时，才进入深度任务图。
+“蘑菇灯库存是多少”通常只需要Business Data Worker调用一次库存Tool；“库存是否满足内部补货规则”才可能需要Business与Knowledge两个Worker。公开入口统一、运行时统一，但实际Worker数量和Tool调用次数按目标自适应。
 
 ### 5.2 角色划分
 
@@ -148,16 +140,16 @@ data/
 - 选择Worker；
 - 控制并行与依赖；
 - 检查证据是否足够；
-- 汇总最终结果。
+- 判断完成/部分成功/追问/失败状态，并形成Answer Evidence Set。
 
-Supervisor不直接访问数据库或文件系统，只能通过工具和Worker获得规范化结果。
+Supervisor不直接访问数据库、文件系统、Tool或内部Service，只能通过结构化Handoff委派Worker并读取规范化结果。最终自然语言交给统一Answer Provider，引用验证通过后才能公开返回。
 
 #### Business Data Worker
 
-- 查看允许的业务Schema；
-- 生成只读查询计划；
-- 调用安全SQL工具；
-- 返回结构化数据、查询时间和数据范围。
+- 只看到当前获准的`get_product_spec`和`search_inventory`能力摘要；
+- 在有界Action/Observation循环中按子任务选择一个、按需组合或先追问；
+- 所有执行都经过Runtime/Harness，不直接访问Service、Repository或数据库；
+- 返回结构化Observation、数据库Evidence、未知项和资源消耗，不自行伪造最终事实。
 
 #### Knowledge Worker
 
@@ -169,23 +161,23 @@ Supervisor不直接访问数据库或文件系统，只能通过工具和Worker�
 #### Web Research Worker
 
 - 将研究问题拆成可搜索查询；
-- 调用Tavily；
-- 保存标题、URL、发布时间、访问时间和摘要；
+- 只通过`search_public_web`发现候选，再通过`read_public_source`读取本Run已登记来源；
+- Tool经Web Service与Provider调用Fake或Tavily，Worker不直接调用SDK或任意URL；
+- 保存标题、URL、发布时间、访问时间、正文片段和Web Evidence；
 - 区分官方来源、媒体、零售页面和低可信来源。
 
-#### Analysis Worker
+#### Analysis Service
 
-- 对已获授权的表格数据运行确定性分析；
-- 计算成本、毛利、周转、趋势和情景；
-- 生成图表数据；
-- 返回公式、输入数据和假设。
+- 只承担阶段明确需要、可复现的固定计算；
+- 首版M4不实现供应商报价、任意经营指标、Pandas复杂分析或图表；
+- Service没有独立目标、上下文、Tool权限或任务生命周期，因此不是Agent。
 
-#### Report Worker
+#### 统一 Answer Provider 与 Report Service
 
-- 根据已有证据和分析结果组织报告；
-- 不自行再次搜索数据；
-- 检查结论是否都有证据；
-- 输出Markdown，再调用确定性转换器生成PDF。
+- 统一Answer Provider只根据重新获权的Observation和Answer Evidence Set合成内容；
+- Citation Validator阻止伪造、越界或已撤权引用进入成功回答；
+- Report Service只做确定性Markdown章节和格式组织，不自行搜索或推理；
+- M4首版不生成PDF，也不创建Report Worker。
 
 ### 5.3 LangGraph状态
 
@@ -220,43 +212,28 @@ Agent状态不保存无限增长的原始工具结果。大结果写入PostgreSQ
 ### 5.4 主路由图
 
 ```text
-START
-  ↓
-authenticate_and_scope
-  ↓
-classify_request
-  ├─ direct_chat ───────────────→ answer → END
-  ├─ fast_business_query ───────→ db_tool → verify → answer → END
-  ├─ knowledge_query ───────────→ rag_tool → verify → answer → END
-  ├─ file_or_image_analysis ────→ ingest/vision → answer → END
-  └─ deep_research
-          ↓
-        plan
-          ↓
-   dispatch independent workers
-     ├─ business_data
-     ├─ knowledge
-     ├─ web_research
-     └─ file_analysis
-          ↓
-     collect_evidence
-          ↓
-      analysis_needed?
-       ├─ yes → analysis
-       └─ no
-          ↓
-      evidence_gate
-       ├─ insufficient → replan/ask_user
-       └─ sufficient
-          ↓
-       synthesize
-          ↓
-      report_requested?
-       ├─ yes → report
-       └─ no
-          ↓
-         END
+公开消息POST
+→ authenticate_and_scope
+→ Agent Gateway / RunContext
+→ Planner + Capability Resolver
+   ├─ L0：无需外部事实 → Answer Provider
+   ├─ L1：一个专业Worker
+   │      → 有界Action/Observation → Harness → Tool
+   ├─ L2：Supervisor
+   │      → Task DAG → 多个Worker顺序或有界并行
+   └─ L3（M4）：创建可恢复研究任务
+          → 应用内有界执行器 + PostgreSQL租约/Checkpoint
+→ collect_and_reauthorize_evidence
+→ sufficient?
+   ├─ no：有限replan / ask_user / partial / cannot_complete
+   └─ yes
+→ Answer Evidence Set
+→ 统一Answer Provider
+→ Citation Validator
+→ 回答或task_id
 ```
+
+这里不维护`inventory_query/knowledge_query`固定意图枚举。模型只在Resolver返回的真实能力范围内提出目标、子任务和结构化行动，Harness仍由程序执行身份、权限、参数、预算和终止规则。M2-21已确认在公开入口迁移完成后，让旧M1固定库存图退出公开主路径，仅保留内部兼容/回归，且不作为Agent Gateway失败时的自动兜底。
 
 ### 5.5 终止条件
 
@@ -296,7 +273,7 @@ class ModelProvider(Protocol):
     async def analyze_image(...): ...
 ```
 
-V1实现 `QwenProvider`，环境变量配置Base URL、API Key和模型名称。业务代码不得直接实例化OpenAI客户端。
+M2-21在通用模型接口上进一步区分严格的Planner、Decision、Handoff和Answer协议，每次只接受经过Schema验证的结构化输出；日常回归使用确定性Mock，显式Smoke使用Qwen实现。环境变量配置Base URL、API Key和模型名称，业务代码不得直接实例化OpenAI客户端。`analyze_image`属于已暂缓的M3能力，不是当前主线完成条件。
 
 ### 6.2 千问职责
 
@@ -366,9 +343,9 @@ UploadFile
 
 错误结果也返回给Agent，但必须去除堆栈、密钥、数据库连接串等敏感信息。
 
-### 7.2 V1目标工具清单
+### 7.2 当前秋招主线Tool清单
 
-V1目标为约13个Agent Tool，按里程碑逐步实现；这里的数量是范围控制，不要求在M1一次写完。
+Tool数量不是完成目标。当前只保留已经实现或由正式阶段方案确认、且对核心闭环必要的单一职责能力。
 
 M1业务查询：
 
@@ -381,49 +358,42 @@ M2知识与文件：
 - `get_evidence_detail`
 - `read_uploaded_file`
 
-M3多模态：
+M3多模态（暂缓，未实现）：
 
 - `analyze_product_images`
 - `search_similar_products`
 
-M4研究与分析：
+M4公开研究（已确认方案，未实现）：
 
-- `get_sales_summary`
-- `get_supplier_quotes`
-- `query_business_metrics`
 - `search_public_web`
-- `analyze_tabular_data`
-- `create_chart_data`
+- `read_public_source`
 
-每个Agent或Skill一次只获得1至5个允许工具，避免把全部工具同时放入模型上下文。Markdown组织、PDF转换、文件落盘等确定性步骤由Service直接执行，不包装成让模型自由决定是否调用的Tool。
+每个Agent或Skill一次只获得1至5个允许工具，避免把全部工具同时放入模型上下文。固定计算、Markdown组织和文件落盘等确定性步骤由Service直接执行，不包装成让模型自由决定是否调用的Tool。供应商报价、任意经营指标、Pandas图表和PDF不在当前秋招主线。
 
 ### 7.3 数据库工具安全
 
-禁止沿用“模型生成任意SQL后直接执行”的方式。安全链路：
+当前V1不提供任意SQL Tool，也不让Business Worker生成SQL。安全链路是：
 
 ```text
 自然语言问题
- → 选择允许的Schema视图
- → 模型生成只读SQL或结构化查询计划
- → sqlglot解析AST
- → 规则校验
- → PostgreSQL只读账号 + 只读事务
- → statement_timeout
- → 强制LIMIT
- → 执行
- → 行列级脱敏
- → 结果与查询摘要入证据层
+ → Capability Resolver只投影获准的业务Tool
+ → Business Worker选择get_product_spec或search_inventory
+ → Harness校验可信身份、白名单、参数、预算和超时
+ → Tool调用固定Service/Repository查询
+ → Repository执行tenant/role/market受控SQL
+ → 结果与查询范围生成数据库Evidence
 ```
 
-校验规则：
+当前规则：
 
-- 仅允许单条 `SELECT` 或 `WITH ... SELECT`；
-- 禁止INSERT、UPDATE、DELETE、DDL、COPY、系统函数和多语句；
-- 表和字段必须在角色白名单内；
-- 默认 `LIMIT 200`，分析任务通过受控工具获取更多；
-- 设置查询超时；
+- 模型不能提交SQL、表名、字段名、连接串或数据库身份；
+- V1所有业务Tool只读，写库存、下单、改价等请求返回不支持；
+- tenant、角色和market范围来自可信RunContext，不接受模型覆盖；
+- Repository使用结构化条件、结果上限和事务边界；
 - 敏感字段不进入模型上下文；
-- SQL原文、用户、耗时和结果行数写审计日志。
+- Tool、用户、规范化参数摘要、耗时、结果状态和Evidence写审计。
+
+未来若真实需求要求通用只读查询，必须另行提交SQL AST、白名单、超时和行列级权限方案，不能从当前两个业务Tool暗中扩张。
 
 ### 7.4 Tool、Skill、Agent与LangGraph的分工
 
@@ -439,28 +409,22 @@ M4研究与分析：
 
 简单库存或规格查询只需要Tool，不为它创建Skill。只有“步骤相对固定、会组合多个工具、会被反复使用、需要明确质量检查”的复杂业务能力才封装为Skill。Skill不是新的Agent，也不绕过LangGraph；它向现有Agent提供可复用的步骤、输入输出约定和检查清单。
 
-### 7.5 V1业务Skill清单
+### 7.5 当前秋招主线业务Skill
 
 | Skill | 首次实现 | 主要职责 | 允许申请的工具 |
 |---|---|---|---|
-| `product-visual-analysis` | M3 | 图片属性、OCR、事实/推断/未知项、相似SKU | `analyze_product_images`、`search_similar_products`、`get_product_spec` |
-| `supplier-quote-analysis` | M4（M2收集需求） | 读取报价表、检查缺失项、统一口径并比较供应商 | `read_uploaded_file`、`get_supplier_quotes`、`analyze_tabular_data`、`query_business_metrics` |
-| `inventory-risk-analysis` | M4 | 判断缺货、积压、周转和补货风险 | `search_inventory`、`get_sales_summary`、`query_business_metrics` |
-| `amazon-eu-market-research` | M4 | 综合产品、内部资料、经营数据和公开网页形成德法市场结论 | `get_product_spec`、`search_knowledge`、`query_business_metrics`、`search_public_web` |
-| `evidence-based-report-writing` | M4 | 按证据、假设、未知项和合成数据声明组织报告 | `get_evidence_detail`、`create_chart_data`，并调用报告Service |
+| `cross-border-market-research` | M4 | 目标澄清、三来源取证、冲突处理、停止条件和输出检查；不写死商品/国家 | 可申请Business、Knowledge、Web能力，最终Tool仍取Worker/父Agent/用户/系统/ACL交集 |
+
+M3的`product-visual-analysis`及原先报价、库存风险、报告写作等候选Skill保留为历史设计，不在当前秋招主线实施。若未来恢复，必须由真实需求重新确认，不能为了凑数量创建。
 
 Skill目录遵循易读、可版本化的文件结构：
 
 ```text
 app/skills/
-├── product-visual-analysis/
+└── cross-border-market-research/
 │   ├── SKILL.md
 │   ├── references/
 │   └── assets/
-├── supplier-quote-analysis/
-├── inventory-risk-analysis/
-├── amazon-eu-market-research/
-└── evidence-based-report-writing/
 
 app/agents/runtime/
 ├── skill_catalog.py      # 只加载名称、描述和版本
@@ -502,7 +466,7 @@ V1 Harness由以下能力逐步组成：
  ∩ 系统安全策略
 ```
 
-M1只实现最小Harness骨架：RunContext、ToolRegistry、PermissionGuard、ExecutionBudget和基础Trace；M2增加证据与检索上下文；M3加入Skill目录、加载、选择、版本和策略；M4补齐Checkpoint、重试、长任务和人工确认；M5建立故障注入与回归评估。Harness因此贯穿所有阶段，但不会成为拖慢M1的独立大平台。
+M1已实现最小Harness骨架；M2-01至M2-20增加检索上下文和Evidence，M2-21负责Capability Resolver、Worker Runtime、父子预算、短期记忆和PostgreSQL Checkpoint；M4在此基础上增加长任务租约、Web Evidence、一个研究Skill和受控恢复；M5建立综合故障注入与回归评估。M3不再是Skill运行时或Checkpoint的前置阶段。
 
 ### 7.7 MCP边界
 
@@ -688,15 +652,16 @@ GET    /api/v1/reports/{report_id}
 POST   /api/v1/feedback
 ```
 
-消息POST返回 `message_id` 和可选 `task_id`，流式内容通过SSE传输。SSE断开不影响后台任务执行。
+消息POST返回 `message_id` 和可选 `task_id`。M2继续使用同步HTTP；M4长任务通过状态API轮询，SSE只有在真实体验验证需要时再增加，不能作为任务持久化机制。
 
 ## 12. 持久化、队列与恢复
 
 ### 12.1 状态分工
 
-- PostgreSQL：业务真相、会话、任务、Agent checkpoint、证据、文件和审计；
-- Redis：Celery队列、短期缓存、限流计数、临时事件；
+- PostgreSQL：业务真相、会话、父子Run、任务、租约、Agent Checkpoint、证据、文件和审计；
 - 本地文件：上传文件、解析产物和报告。
+
+V1不引入Redis/Celery。M4应用内有界执行器从PostgreSQL领取任务租约，每个安全节点完成后提交状态和Checkpoint。该方案用于本地作品规模的可恢复证明，不宣称具有分布式队列吞吐；只有真实压测证明不足时才另行评估队列。
 
 ### 12.2 恢复策略
 
@@ -776,19 +741,16 @@ V1先实现结构化JSON日志和PostgreSQL追踪表；LangSmith/Langfuse、Prom
 ```text
 frontend   Next.js
 api        FastAPI
-worker     Celery + 文件/RAG/报告任务
 postgres   PostgreSQL + pgvector
-redis      队列与缓存
 ```
 
-源文件通过宿主机目录挂载给API和Worker。Embedding/Reranker初期可在Worker进程按需加载；实测后决定常驻或独立推理服务。
+M4长任务由API应用中的有界执行器领取PostgreSQL任务租约；源文件通过Storage抽象访问本地目录。Embedding/Reranker初期可在应用进程按需加载；实测后决定常驻或独立推理服务。
 
 ### 16.2 本地运行配置
 
 ```env
 APP_ENV=development
 DATABASE_URL=postgresql+psycopg://...
-REDIS_URL=redis://redis:6379/0
 
 LLM_PROVIDER=qwen
 LLM_MODEL=qwen3.8-max
@@ -810,11 +772,10 @@ RERANKER_MODEL=BAAI/bge-reranker-v2-m3
 
 ### 17.1 保留
 
-- FastAPI入口和异步接口思路；
-- 会话ID与进度事件；
-- 主Agent/数据库/知识库/网络的职责雏形；
-- Tavily搜索工具；
-- 文件上传、Markdown和PDF能力；
+- 当前FastAPI认证、会话消息URL、文件API和请求/响应合同；
+- M1两个业务Tool、数据库Evidence、Seed和回归基线；
+- M2自建RAG、Storage、知识Tool和文档Evidence；
+- LangGraph、Harness和Provider抽象；
 - LangGraph相关依赖。
 
 ### 17.2 替换
@@ -827,39 +788,38 @@ RERANKER_MODEL=BAAI/bge-reranker-v2-m3
 | MySQL直接查询 | PostgreSQL + 安全只读SQL层 |
 | 任意SQL执行 | AST校验、白名单、超时、LIMIT |
 | 会话目录直接复制文件 | Storage接口 + files元数据 |
-| `asyncio.create_task` | Celery持久任务 |
+| 进程内不可恢复后台任务 | 应用内有界执行器＋PostgreSQL任务租约/Checkpoint |
 | 绝对路径下载参数 | `file_id`下载 |
 | 全开放CORS | 本地前端域名白名单 |
 
 ### 17.3 不建议一次性重写
 
-迁移按垂直切片进行：先让一个“库存查询”新链路跑通，再完成一个“知识问答”，最后接深度研究。每完成一个切片都保留自动化测试，避免大爆炸式重写。
+迁移按垂直切片进行：M1固定库存图已证明第一个闭环；M2-21在保留聊天HTTP合同的前提下建设Agent Gateway和Business/Knowledge Worker，再把公开消息入口切换到新主路径；旧M1固定图仅作为内部兼容/回归基线，不成为失败时的隐式兜底。M2-22至M2-24完成评估和前端后，再接M4深度研究。每完成一个切片都保留自动化测试，避免大爆炸式重写。
 
 ## 18. 测试策略概要
 
 - 单元测试：工具参数、SQL规则、路径安全、分块、证据规范化；
-- 集成测试：PostgreSQL/pgvector、Redis、文件上传、Tavily Mock；
+- 集成测试：PostgreSQL/pgvector、文件上传、父子Run/Checkpoint、Tavily Fake；
 - Agent轨迹测试：给定问题必须选择指定工具或禁止工具；
 - Skill轨迹测试：触发正确、简单任务不误触发、版本可追踪、规定步骤完成；
 - Harness策略测试：权限交集、预算、超时、重复调用、重试和审计生效；
 - RAG评估：Recall、MRR、引用和忠实性；
-- 多模态评估：属性准确率、OCR、未知项和JSON有效率；
-- 端到端：从聊天输入到报告下载；
-- 故障注入：模型超时、Tavily失败、Worker重启、文件损坏。
+- 多模态评估仅在未来恢复M3后重新立项；
+- 端到端：统一聊天中的库存/知识/Evidence，以及M4任务进度和Markdown结果；
+- 故障注入：模型超时、Tavily失败、执行器恢复、租约到期和文件损坏。
 
 ## 19. 第一版技术完成定义
 
 满足以下条件才视为技术完成：
 
-- 快速查询和深度任务走不同图路径；
+- 所有公开聊天使用同一Agent Gateway，按L0/L1/L2/L3选择直接回答、单Worker、多Worker或持久任务；
 - 简单库存查询不强制启用Skill，复杂业务流程可加载匹配版本的Skill；
 - Tool调用必须通过Harness计算出的服务端权限交集；
 - Agent状态和会话重启后仍存在；
 - 数据库工具无法执行写操作或越权查询；
 - RAG包含混合检索、Reranker和引用；
-- 图片通过结构化Schema进入证据层；
-- 任一报告结论可定位到Evidence；
+- 数据库、文档和网页的重要结论都可定位到Evidence；
 - 外部服务失败可重试或部分降级；
 - 本地文件不能通过路径参数越权访问；
 - 关键指标能够通过评估Runner复现；
-- Docker Compose可在目标电脑启动核心服务。
+- Docker Compose可在目标电脑启动前端、API和PostgreSQL/pgvector核心服务。

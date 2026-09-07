@@ -13,7 +13,11 @@ from app.models.knowledge import (
     StoredFile,
 )
 from app.models.runtime import (
+    AgentAnswerEvidence,
+    AgentCheckpoint,
     AgentRun,
+    AgentTaskDependency,
+    AgentTaskRecord,
     ContextArtifact,
     Evidence,
     Message,
@@ -23,7 +27,11 @@ from app.models.runtime import (
 )
 
 __all__ = [
+    "AgentAnswerEvidence",
+    "AgentCheckpoint",
     "AgentRun",
+    "AgentTaskDependency",
+    "AgentTaskRecord",
     "ContextArtifact",
     "Document",
     "DocumentAcl",

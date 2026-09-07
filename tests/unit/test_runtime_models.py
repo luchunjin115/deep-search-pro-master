@@ -24,14 +24,16 @@ def test_runtime_metadata_contains_m1_06_tables() -> None:
     } <= set(Base.metadata.tables)
 
 
-def test_trace_id_is_unique() -> None:
-    unique_column_sets = {
-        tuple(column.name for column in constraint.columns)
-        for constraint in AgentRun.__table__.constraints
-        if constraint.__class__.__name__ == "UniqueConstraint"
-    }
+def test_root_trace_id_remains_unique_while_workers_share_the_trace() -> None:
+    index = next(
+        index
+        for index in AgentRun.__table__.indexes
+        if index.name == "uq_agent_runs_root_trace_id"
+    )
 
-    assert ("trace_id",) in unique_column_sets
+    assert index.unique is True
+    assert tuple(column.name for column in index.columns) == ("trace_id",)
+    assert "run_kind" in str(index.dialect_options["postgresql"]["where"])
 
 
 def test_runtime_json_fields_use_postgresql_jsonb() -> None:

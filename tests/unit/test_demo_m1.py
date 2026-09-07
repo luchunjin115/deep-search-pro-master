@@ -21,6 +21,7 @@ FR_USER_ID = "20000000-0000-0000-0000-000000000004"
 DE_THREAD_ID = "70000000-0000-0000-0000-000000000001"
 FR_THREAD_ID = "70000000-0000-0000-0000-000000000002"
 MESSAGE_ID = "71000000-0000-0000-0000-000000000001"
+REQUEST_ID = "71000000-0000-0000-0000-000000000002"
 EVIDENCE_ID = "72000000-0000-0000-0000-000000000001"
 TRACE_ID = "73000000-0000-0000-0000-000000000001"
 SNAPSHOT_ID = "50000000-0000-0000-0000-000000000001"
@@ -91,6 +92,7 @@ def test_public_demo_uses_only_http_contracts_and_returns_safe_summary() -> None
                 200,
                 json={
                     "status": "completed",
+                    "request_id": REQUEST_ID,
                     "thread_id": DE_THREAD_ID,
                     "message_id": MESSAGE_ID,
                     "answer": "德国市场DE-FRA仓的可售库存为125件（合成演示数据）。",

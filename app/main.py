@@ -1,4 +1,6 @@
-"""M1 FastAPI entry point with application and database health checks."""
+"""FastAPI entry point with application and database health checks."""
+
+from collections.abc import Callable
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +22,7 @@ from app.db.session import (
     check_database_connection,
     create_database_runtime,
 )
+from app.llm.agent_provider import EngineeredAgentProvider
 from app.services.storage import StorageBackend
 
 
@@ -27,6 +30,9 @@ def create_app(
     settings: Settings | None = None,
     database_runtime: DatabaseRuntime | None = None,
     storage_backend: StorageBackend | None = None,
+    engineered_agent_provider_factory: (
+        Callable[[], EngineeredAgentProvider] | None
+    ) = None,
 ) -> FastAPI:
     """使用显式配置创建应用，方便测试且避免导入旧原型。"""
 
@@ -41,6 +47,10 @@ def create_app(
     )
     application.state.storage_backend = storage_backend
     application.state.embedding_provider = None
+    application.state.reranker_provider = None
+    application.state.engineered_agent_provider_factory = (
+        engineered_agent_provider_factory
+    )
     application.add_middleware(
         CORSMiddleware,
         allow_origins=current_settings.cors_origins,
