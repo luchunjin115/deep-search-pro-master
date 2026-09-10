@@ -38,6 +38,16 @@ class RetrievalCandidateIdentity(M1Schema):
     chunk_id: UUID
 
 
+class RetrievalCandidateFailure(M1Schema):
+    """One safe record for a ranked row that could not become a public result."""
+
+    source_mode: Literal["dense", "lexical"]
+    rank: int = Field(ge=1, le=100)
+    chunk_id: UUID
+    stage: Literal["source_locator_mapping"] = "source_locator_mapping"
+    reason: Literal["invalid_source_locator"] = "invalid_source_locator"
+
+
 class RetrievalDocumentMetadata(M1Schema):
     """Authorized document facts safe to show beside one retrieved Chunk."""
 
@@ -304,12 +314,16 @@ class RetrievalResponse(M1Schema):
     fts_identity: RetrievalFtsIdentity | None = None
     rrf_k: int | None = Field(default=None, ge=1, le=200)
     results: list[RetrievalResult] = Field(default_factory=list, max_length=100)
+    candidate_failures: list[RetrievalCandidateFailure] = Field(
+        default_factory=list,
+        max_length=200,
+    )
 
     @model_validator(mode="after")
     def validate_mode_and_ranking(self) -> RetrievalResponse:
-        expected_ranks = list(range(1, len(self.results) + 1))
-        if [result.final_rank for result in self.results] != expected_ranks:
-            raise ValueError("final ranks must be contiguous and ordered")
+        result_ranks = [result.final_rank for result in self.results]
+        if result_ranks != sorted(result_ranks):
+            raise ValueError("final ranks must be ordered")
 
         if self.mode == "dense":
             if self.embedding_identity is None:
@@ -321,6 +335,7 @@ class RetrievalResponse(M1Schema):
                 for result in self.results
             ):
                 raise ValueError("dense retrieval requires only Dense scores")
+            self._validate_single_route_ranks("dense")
             return self
 
         if self.mode == "lexical":
@@ -333,8 +348,19 @@ class RetrievalResponse(M1Schema):
                 for result in self.results
             ):
                 raise ValueError("lexical retrieval requires only Lexical scores")
+            self._validate_single_route_ranks("lexical")
             return self
 
+        expected_ranks = list(range(1, len(self.results) + 1))
+        if result_ranks != expected_ranks:
+            raise ValueError("final ranks must be contiguous and ordered")
+        failure_keys = [
+            (failure.source_mode, failure.rank) for failure in self.candidate_failures
+        ]
+        if failure_keys != sorted(failure_keys) or len(failure_keys) != len(
+            set(failure_keys)
+        ):
+            raise ValueError("Hybrid candidate failures must be unique and ordered")
         if (
             self.embedding_identity is None
             or self.fts_identity is None
@@ -343,6 +369,19 @@ class RetrievalResponse(M1Schema):
         ):
             raise ValueError("hybrid retrieval requires both identities and RRF scores")
         return self
+
+    def _validate_single_route_ranks(
+        self,
+        mode: Literal["dense", "lexical"],
+    ) -> None:
+        if any(failure.source_mode != mode for failure in self.candidate_failures):
+            raise ValueError("candidate failure mode must match retrieval mode")
+        failure_ranks = [failure.rank for failure in self.candidate_failures]
+        if failure_ranks != sorted(failure_ranks):
+            raise ValueError("candidate failure ranks must be ordered")
+        all_ranks = [result.final_rank for result in self.results] + failure_ranks
+        if sorted(all_ranks) != list(range(1, len(all_ranks) + 1)):
+            raise ValueError("results and failures must account for every route rank")
 
 
 class RerankedRetrievalResponse(M1Schema):

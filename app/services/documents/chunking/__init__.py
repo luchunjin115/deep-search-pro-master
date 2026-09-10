@@ -8,6 +8,7 @@ from app.services.documents.chunking.chunker import (
 from app.services.documents.chunking.contracts import (
     CanonicalChunkArtifact,
     ChunkerIdentity,
+    ChunkHeadingSource,
     ChunkingConfig,
     ChunkInputProvenance,
     DocumentChunk,
@@ -35,6 +36,7 @@ from app.services.documents.chunking.token_counting import (
 
 __all__ = [
     "CanonicalChunkArtifact",
+    "ChunkHeadingSource",
     "ChunkInputProvenance",
     "ChunkerIdentity",
     "ChunkingConfig",

@@ -28,6 +28,7 @@ def _settings() -> Settings:
         _env_file=".env.example",
         app_env="test",
         docling_backend="disabled",
+        docx_image_ocr_backend="disabled",
     )
 
 
@@ -76,7 +77,7 @@ def test_ordinary_golden_set_preserves_all_content_and_locators_in_chunks() -> N
     assert all(fact["evidence_chunk_id"] is not None for fact in facts)
 
 
-def test_visual_docx_known_upstream_gap_is_reported_without_fake_evidence() -> None:
+def test_visual_docx_header_content_is_recovered_without_fake_page_locator() -> None:
     settings = _settings()
     data = load_complex_seed_definition()
     source = next(
@@ -98,4 +99,8 @@ def test_visual_docx_known_upstream_gap_is_reported_without_fake_evidence() -> N
     )
 
     assert [fact["passed"] for fact in facts] == [False, False]
-    assert [fact["evidence_chunk_id"] for fact in facts] == [None, None]
+    assert facts[0]["content_passed"] is True
+    assert facts[0]["locator_passed"] is False
+    assert facts[0]["evidence_chunk_id"] is None
+    assert facts[1]["content_passed"] is False
+    assert facts[1]["evidence_chunk_id"] is None

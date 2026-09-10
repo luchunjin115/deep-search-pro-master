@@ -588,6 +588,7 @@ def _renumber_chunk(
         retrieval_text=chunk.retrieval_text,
         token_count=chunk.token_count,
         heading_path=chunk.heading_path,
+        heading_sources=chunk.heading_sources,
         source_block_ids=chunk.source_block_ids,
         source_spans=chunk.source_spans,
         page_numbers=chunk.page_numbers,

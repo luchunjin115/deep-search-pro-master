@@ -88,6 +88,11 @@ class DocumentParserService:
                 source_name=claim.source_name,
                 content=content,
             )
+            if (
+                routed.post_parse_quality is None
+                or routed.post_parse_quality.status != "accepted"
+            ):
+                raise DocumentParsingError
             payload = routed.model_dump_json().encode("utf-8")
             published_key = self._parsed_key(claim)
             stored = self._storage.put(
@@ -113,7 +118,10 @@ class DocumentParserService:
                 parser_version=selected.parser.version,
                 artifact_content_sha256=selected.content_sha256,
                 published_sha256=stored.sha256,
-                warning_count=len(selected.warnings),
+                warning_count=(
+                    len(selected.warnings)
+                    + len(routed.post_parse_quality.warning_codes)
+                ),
             )
             self._complete(
                 claim,

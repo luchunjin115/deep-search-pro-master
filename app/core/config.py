@@ -89,6 +89,17 @@ class Settings(BaseSettings):
     docling_device: Literal["cpu"] = "cpu"
     docling_num_threads: int = Field(default=4, ge=1, le=4)
     docling_document_timeout_seconds: int = Field(default=120, ge=90, le=300)
+    docling_process_timeout_seconds: float = Field(default=150.0, ge=0.1, le=330.0)
+    docling_process_max_rss_bytes: int = Field(
+        default=4 * 1024 * 1024 * 1024,
+        ge=1 * 1024 * 1024,
+        le=8 * 1024 * 1024 * 1024,
+    )
+    docling_process_max_snapshot_bytes: int = Field(
+        default=64 * 1024 * 1024,
+        ge=1024,
+        le=100 * 1024 * 1024,
+    )
     docling_ocr_engine: Literal["rapidocr"] = "rapidocr"
     docling_enable_remote_services: bool = False
     docling_allow_external_plugins: bool = False
@@ -125,7 +136,38 @@ class Settings(BaseSettings):
     )
     pdf_low_text_character_threshold: int = Field(default=20, ge=1, le=500)
 
-    # M2-08 DOCX解析保护；先检查ZIP中央目录，再由python-docx读取正文。
+    # M2-22.4R-01 Native文本健康度；路由结果同时记录固定策略版本和这些阈值。
+    native_text_min_characters: int = Field(default=20, ge=1, le=500)
+    native_text_min_valid_character_ratio: float = Field(
+        default=0.9,
+        ge=0.5,
+        le=1.0,
+    )
+    native_text_min_healthy_page_ratio: float = Field(
+        default=0.8,
+        ge=0.5,
+        le=1.0,
+    )
+
+    # M2-22.4R-04解析后质量门禁；全部阈值进入发布产物供审计。
+    post_parse_min_final_native_ratio: float = Field(
+        default=0.7,
+        ge=0.5,
+        le=1.0,
+    )
+    post_parse_min_page_characters: int = Field(default=10, ge=1, le=500)
+    post_parse_native_page_baseline_characters: int = Field(
+        default=50,
+        ge=1,
+        le=500,
+    )
+    docx_empty_ocr_min_image_bytes: int = Field(
+        default=5 * 1024,
+        ge=1024,
+        le=25 * 1024 * 1024,
+    )
+
+    # M2-08/R-03 DOCX保护；ZIP安全门之后才读取正文、页眉页脚和原位图片。
     docx_max_archive_members: int = Field(default=5000, ge=10, le=20_000)
     docx_max_uncompressed_bytes: int = Field(
         default=100 * 1024 * 1024,
@@ -140,6 +182,20 @@ class Settings(BaseSettings):
         ge=10_000,
         le=20_000_000,
     )
+    docx_image_ocr_backend: Literal["disabled", "rapidocr"] = "rapidocr"
+    docx_image_ocr_threads: int = Field(default=4, ge=1, le=4)
+    docx_max_images: int = Field(default=100, ge=1, le=1000)
+    docx_max_image_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        ge=1024,
+        le=25 * 1024 * 1024,
+    )
+    docx_max_total_image_bytes: int = Field(
+        default=25 * 1024 * 1024,
+        ge=1024,
+        le=100 * 1024 * 1024,
+    )
+    docx_max_image_pixels: int = Field(default=20_000_000, ge=10_000, le=100_000_000)
 
     # M2-09 XLSX/CSV解析保护；表格只作为知识文件读取，不写业务表。
     xlsx_max_archive_members: int = Field(default=5000, ge=10, le=20_000)
@@ -339,6 +395,15 @@ class Settings(BaseSettings):
             raise ValueError("DOCLING_ENABLE_REMOTE_SERVICES必须为False")
         if self.docling_allow_external_plugins:
             raise ValueError("DOCLING_ALLOW_EXTERNAL_PLUGINS必须为False")
+        if self.docx_max_total_image_bytes < self.docx_max_image_bytes:
+            raise ValueError("DOCX图片总字节上限不能小于单图上限")
+        if (
+            self.post_parse_native_page_baseline_characters
+            < self.post_parse_min_page_characters
+        ):
+            raise ValueError("解析后逐页Native基线不能小于最终页最低字符数")
+        if self.docx_empty_ocr_min_image_bytes > self.docx_max_image_bytes:
+            raise ValueError("DOCX空OCR图片阈值不能大于单图字节上限")
         if self.embedding_backend == "bge" and (
             self.embedding_model != BGE_M3_MODEL_ID
             or self.embedding_revision != BGE_M3_REVISION

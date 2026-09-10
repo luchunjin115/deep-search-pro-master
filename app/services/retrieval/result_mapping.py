@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from typing import Protocol, cast
+
+from pydantic import ValidationError
 
 from app.schemas.retrieval import (
     CsvRetrievalSourceLocator,
@@ -25,10 +28,17 @@ class RetrievalSourceCandidate(Protocol):
     def page_numbers(self) -> list[object]: ...
 
     @property
+    def source_block_ids(self) -> list[object]: ...
+
+    @property
     def source_spans(self) -> list[object]: ...
 
     @property
     def table_json(self) -> dict[str, object] | None: ...
+
+
+class RetrievalSourceLocatorMappingError(ValueError):
+    """A candidate has no trustworthy public source locator."""
 
 
 def source_locator_from_candidate(
@@ -36,6 +46,15 @@ def source_locator_from_candidate(
 ) -> RetrievalSourceLocator:
     """Map persisted coordinates without exposing Storage implementation details."""
 
+    try:
+        return _source_locator_from_candidate(candidate)
+    except (TypeError, ValueError, ValidationError) as error:
+        raise RetrievalSourceLocatorMappingError(str(error)) from error
+
+
+def _source_locator_from_candidate(
+    candidate: RetrievalSourceCandidate,
+) -> RetrievalSourceLocator:
     source = _first_source_locator(candidate.source_spans)
     headings = _string_list(candidate.heading_path)
     pages = _positive_int_list(candidate.page_numbers)
@@ -52,10 +71,22 @@ def source_locator_from_candidate(
             heading_path=headings,
         )
     if extension == ".docx":
+        block_number = source.block_number
+        if not any(
+            (
+                source.page_number,
+                pages,
+                block_number,
+                source.paragraph_number,
+                source.table_number,
+                headings,
+            )
+        ):
+            block_number = _canonical_block_number(candidate)
         return DocxRetrievalSourceLocator(
             page_number=source.page_number,
             page_numbers=pages,
-            block_number=source.block_number,
+            block_number=block_number,
             paragraph_number=source.paragraph_number,
             table_number=source.table_number,
             heading_path=headings,
@@ -91,6 +122,22 @@ def _first_source_locator(source_spans: list[object]) -> SourceLocator:
         raise ValueError("source span is missing")
     raw_locator = source_spans[0].get("start_locator")
     return SourceLocator.model_validate(raw_locator)
+
+
+def _canonical_block_number(candidate: RetrievalSourceCandidate) -> int:
+    if not candidate.source_block_ids or not isinstance(
+        candidate.source_block_ids[0], str
+    ):
+        raise ValueError("canonical source block is missing")
+    if not candidate.source_spans or not isinstance(candidate.source_spans[0], dict):
+        raise ValueError("source span is missing")
+    canonical_block_id = candidate.source_block_ids[0]
+    if candidate.source_spans[0].get("block_id") != canonical_block_id:
+        raise ValueError("canonical source block does not match the source span")
+    match = re.fullmatch(r"b([0-9]{6})", canonical_block_id)
+    if match is None or int(match.group(1)) < 1:
+        raise ValueError("canonical source block is invalid")
+    return int(match.group(1))
 
 
 def _string_list(values: list[object]) -> list[str]:

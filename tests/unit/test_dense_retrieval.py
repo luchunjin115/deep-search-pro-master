@@ -128,6 +128,7 @@ def _candidate(*, distance: float = 0.25) -> DenseCandidateRecord:
         file_extension=".pdf",
         heading_path=["产品参数"],
         page_numbers=[2],
+        source_block_ids=["b000001"],
         source_spans=[
             {
                 "block_id": "b000001",
@@ -326,6 +327,76 @@ def test_dense_service_maps_all_existing_public_source_types(
     response = service.retrieve(_USER, RetrievalRequest(query="定位"))
 
     assert response.results[0].source_locator.source_type == source_type
+
+
+def test_dense_service_degrades_coordinate_less_docx_to_canonical_block() -> None:
+    provider = RecordingProvider()
+    candidate = replace(
+        _candidate(),
+        file_extension=".docx",
+        heading_path=[],
+        page_numbers=[],
+        source_block_ids=["b000007"],
+        source_spans=[
+            {
+                "block_id": "b000007",
+                "start_locator": {},
+                "end_locator": {},
+            }
+        ],
+    )
+    service = DenseRetrievalService(
+        StubRepository(provider.identity, candidates=[candidate]),
+        provider,
+    )
+
+    response = service.retrieve(_USER, RetrievalRequest(query="页眉控制码"))
+
+    locator = response.results[0].source_locator
+    assert locator.source_type == "docx"
+    assert locator.block_number == 7
+    assert response.candidate_failures == []
+
+
+def test_dense_service_isolates_one_broken_locator_without_renumbering() -> None:
+    provider = RecordingProvider()
+    first = replace(
+        _candidate(),
+        chunk_id=UUID("33333333-3333-4333-8333-333333333331"),
+    )
+    broken = replace(
+        _candidate(),
+        chunk_id=UUID("33333333-3333-4333-8333-333333333332"),
+        file_extension=".docx",
+        heading_path=[],
+        page_numbers=[],
+        source_block_ids=["not-a-canonical-block"],
+        source_spans=[
+            {
+                "block_id": "not-a-canonical-block",
+                "start_locator": {},
+                "end_locator": {},
+            }
+        ],
+    )
+    third = replace(
+        _candidate(),
+        chunk_id=UUID("33333333-3333-4333-8333-333333333333"),
+    )
+    service = DenseRetrievalService(
+        StubRepository(provider.identity, candidates=[first, broken, third]),
+        provider,
+    )
+
+    response = service.retrieve(_USER, RetrievalRequest(query="页眉控制码"))
+
+    assert [result.final_rank for result in response.results] == [1, 3]
+    assert [failure.rank for failure in response.candidate_failures] == [2]
+    failure = response.candidate_failures[0]
+    assert failure.chunk_id == broken.chunk_id
+    assert failure.source_mode == "dense"
+    assert failure.stage == "source_locator_mapping"
+    assert failure.reason == "invalid_source_locator"
 
 
 def test_dense_service_maps_search_database_failure_after_query_embedding() -> None:

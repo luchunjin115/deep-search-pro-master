@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from itertools import pairwise
 from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import Field, model_validator
@@ -15,6 +16,9 @@ ARTIFACT_SCHEMA_VERSION: Literal["m2-canonical-parsed-artifact-v1"] = (
     "m2-canonical-parsed-artifact-v1"
 )
 NATIVE_ADAPTER_VERSION: Literal["m2-native-adapter-v1"] = "m2-native-adapter-v1"
+NATIVE_PDF_ADAPTER_VERSION: Literal["m2-native-pdf-adapter-v2"] = (
+    "m2-native-pdf-adapter-v2"
+)
 DOCLING_ADAPTER_VERSION: Literal["m2-docling-adapter-v1"] = "m2-docling-adapter-v1"
 CONTENT_HASH_VERSION: Literal["m2-canonical-content-v1"] = "m2-canonical-content-v1"
 
@@ -79,7 +83,48 @@ class ArtifactHeadingHint(M1Schema):
     level: int = Field(ge=1, le=9)
     font_size: float | None = Field(default=None, gt=0, le=1000)
     locator: SourceLocator
+    layout_line_number: int | None = Field(
+        default=None,
+        ge=1,
+        le=100_000,
+        exclude_if=lambda value: value is None,
+    )
     bounding_box: ArtifactBoundingBox | None = None
+
+    @model_validator(mode="after")
+    def validate_location(self) -> ArtifactHeadingHint:
+        if self.layout_line_number is not None and self.bounding_box is None:
+            raise ValueError("heading layout line reference requires a bounding box")
+        if self.bounding_box is not None and (
+            self.locator.page_number != self.bounding_box.page_number
+        ):
+            raise ValueError("heading bounding box page does not match its locator")
+        return self
+
+
+class ArtifactPdfLayoutLine(M1Schema):
+    """One physical PDF line located within its parent page text and page."""
+
+    line_number: int = Field(ge=1, le=100_000)
+    text: str = Field(min_length=1, max_length=1_000_000)
+    character_start: int | None = Field(default=None, ge=0, le=5_000_000)
+    character_end: int | None = Field(default=None, gt=0, le=5_000_000)
+    locator: SourceLocator
+    bounding_box: ArtifactBoundingBox
+
+    @model_validator(mode="after")
+    def validate_location(self) -> ArtifactPdfLayoutLine:
+        if (self.character_start is None) != (self.character_end is None):
+            raise ValueError("PDF layout line range must be complete or absent")
+        if (
+            self.character_start is not None
+            and self.character_end is not None
+            and self.character_start >= self.character_end
+        ):
+            raise ValueError("PDF layout line range must have positive length")
+        if self.locator.page_number != self.bounding_box.page_number:
+            raise ValueError("PDF layout line bounding box page does not match locator")
+        return self
 
 
 class ArtifactPageProperties(M1Schema):
@@ -91,11 +136,46 @@ class ArtifactPageProperties(M1Schema):
     low_text: bool
 
 
+class ArtifactDocxSource(M1Schema):
+    """Versioned DOCX-only provenance for a header, footer, or inline image."""
+
+    contract_version: Literal["m2-docx-source-v1"] = "m2-docx-source-v1"
+    section_number: int | None = Field(default=None, ge=1)
+    region_block_number: int | None = Field(default=None, ge=1)
+    content_kind: Literal["paragraph", "table"] | None = None
+    run_number: int | None = Field(default=None, ge=1)
+    image_number: int | None = Field(default=None, ge=1)
+    image_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    image_size_bytes: int | None = Field(default=None, gt=0)
+    image_width: int | None = Field(default=None, gt=0)
+    image_height: int | None = Field(default=None, gt=0)
+    content_type: str | None = Field(default=None, min_length=1, max_length=100)
+    ocr_provider_name: str | None = Field(default=None, min_length=1, max_length=100)
+    ocr_provider_version: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+    )
+    ocr_mean_confidence: float | None = Field(default=None, ge=0, le=1)
+
+
 class ArtifactTextBlock(M1Schema):
     """One ordered page or document paragraph."""
 
     kind: Literal["text"] = "text"
     block_id: str = Field(pattern=r"^b[0-9]{6}$")
+    source_kind: Literal[
+        "document_text",
+        "docx_header",
+        "docx_footer",
+        "docx_image_ocr",
+    ] = Field(
+        default="document_text", exclude_if=lambda value: value == "document_text"
+    )
+    docx_source: ArtifactDocxSource | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     text: str
     locator: SourceLocator
     heading_level: int | None = Field(default=None, ge=1, le=9)
@@ -106,10 +186,67 @@ class ArtifactTextBlock(M1Schema):
         default_factory=list,
         max_length=100,
     )
+    pdf_layout_lines: list[ArtifactPdfLayoutLine] = Field(
+        default_factory=list,
+        max_length=100_000,
+        exclude_if=lambda value: not value,
+    )
     bounding_box: ArtifactBoundingBox | None = None
 
     @model_validator(mode="after")
     def validate_location(self) -> ArtifactTextBlock:
+        if self.source_kind == "document_text":
+            if self.docx_source is not None:
+                raise ValueError("ordinary text cannot declare DOCX source metadata")
+        elif self.docx_source is None:
+            raise ValueError("special DOCX text requires source metadata")
+        elif self.source_kind in {"docx_header", "docx_footer"}:
+            if (
+                self.docx_source.section_number is None
+                or self.docx_source.region_block_number is None
+                or self.docx_source.content_kind is None
+                or any(
+                    value is not None
+                    for value in (
+                        self.docx_source.run_number,
+                        self.docx_source.image_number,
+                        self.docx_source.image_sha256,
+                        self.docx_source.image_size_bytes,
+                        self.docx_source.image_width,
+                        self.docx_source.image_height,
+                        self.docx_source.content_type,
+                        self.docx_source.ocr_provider_name,
+                        self.docx_source.ocr_provider_version,
+                        self.docx_source.ocr_mean_confidence,
+                    )
+                )
+                or self.locator != SourceLocator()
+            ):
+                raise ValueError("DOCX header/footer metadata is inconsistent")
+        elif (
+            self.docx_source.section_number is not None
+            or self.docx_source.region_block_number is not None
+            or self.docx_source.content_kind is not None
+            or any(
+                value is None
+                for value in (
+                    self.docx_source.run_number,
+                    self.docx_source.image_number,
+                    self.docx_source.image_sha256,
+                    self.docx_source.image_size_bytes,
+                    self.docx_source.image_width,
+                    self.docx_source.image_height,
+                    self.docx_source.content_type,
+                    self.docx_source.ocr_provider_name,
+                    self.docx_source.ocr_provider_version,
+                )
+            )
+            or self.locator.block_number is None
+            or self.locator.paragraph_number is None
+            or self.locator.table_number is not None
+            or self.locator.page_number is not None
+        ):
+            raise ValueError("DOCX image OCR metadata is inconsistent")
         if self.page is not None and self.locator.page_number != self.page.page_number:
             raise ValueError("text block page does not match its locator")
         if self.locator.heading_path != self.heading_path:
@@ -118,6 +255,43 @@ class ArtifactTextBlock(M1Schema):
             self.locator.page_number != self.bounding_box.page_number
         ):
             raise ValueError("text bounding box page does not match its locator")
+        if [line.line_number for line in self.pdf_layout_lines] != list(
+            range(1, len(self.pdf_layout_lines) + 1)
+        ):
+            raise ValueError("PDF layout lines must be a complete one-based sequence")
+        lines_by_number = {line.line_number: line for line in self.pdf_layout_lines}
+        mapped_ranges: list[tuple[int, int]] = []
+        for line in self.pdf_layout_lines:
+            if (
+                self.locator.page_number is None
+                or line.locator.page_number != self.locator.page_number
+                or line.bounding_box.page_number != self.locator.page_number
+            ):
+                raise ValueError("PDF layout line belongs to a different text page")
+            if line.character_start is None or line.character_end is None:
+                continue
+            if line.character_end > len(self.text):
+                raise ValueError("PDF layout line range exceeds text block")
+            if _locator_text(self.text[line.character_start : line.character_end]) != (
+                _locator_text(line.text)
+            ):
+                raise ValueError("PDF layout line text does not match its range")
+            mapped_ranges.append((line.character_start, line.character_end))
+        ordered_ranges = sorted(mapped_ranges)
+        for previous, current in pairwise(ordered_ranges):
+            if current[0] < previous[1]:
+                raise ValueError("PDF layout line ranges cannot overlap")
+        for hint in self.heading_hints:
+            if hint.layout_line_number is None:
+                continue
+            referenced_line = lines_by_number.get(hint.layout_line_number)
+            if referenced_line is None:
+                raise ValueError("heading hint references a missing PDF layout line")
+            if hint.text != referenced_line.text or (
+                hint.bounding_box is not None
+                and hint.bounding_box != referenced_line.bounding_box
+            ):
+                raise ValueError("heading hint does not match its PDF layout line")
         return self
 
 
@@ -277,6 +451,14 @@ class CanonicalParsedArtifact(M1Schema):
         text_blocks = [
             block for block in self.blocks if isinstance(block, ArtifactTextBlock)
         ]
+        if self.source_type != "docx" and any(
+            block.source_kind != "document_text" for block in text_blocks
+        ):
+            raise ValueError("DOCX source text can only appear in DOCX artifacts")
+        if self.source_type != "pdf" and any(
+            block.pdf_layout_lines for block in text_blocks
+        ):
+            raise ValueError("PDF layout lines can only appear in PDF artifacts")
         tables = [
             block for block in self.blocks if isinstance(block, ArtifactTableBlock)
         ]
@@ -408,6 +590,15 @@ def artifact_to_markdown(artifact: CanonicalParsedArtifact) -> str:
         if isinstance(block, ArtifactTextBlock):
             if artifact.source_type == "pdf" and block.locator.page_number is not None:
                 sections.append(f"<!-- page:{block.locator.page_number} -->")
+            if block.source_kind == "docx_header":
+                sections.append(f"[页眉]\n{block.text}\n[/页眉]")
+                continue
+            if block.source_kind == "docx_footer":
+                sections.append(f"[页脚]\n{block.text}\n[/页脚]")
+                continue
+            if block.source_kind == "docx_image_ocr":
+                sections.append(f"[图片内容]\n{block.text}\n[/图片内容]")
+                continue
             if block.heading_level is not None and block.text:
                 sections.append(f"{'#' * block.heading_level} {block.text}")
             elif block.text:
@@ -459,6 +650,10 @@ def _escape_markdown_cell(value: str) -> str:
 
 def _text_character_count(value: str) -> int:
     return sum(not character.isspace() for character in value)
+
+
+def _locator_text(value: str) -> str:
+    return " ".join(value.split())
 
 
 def _cell_character_count(cell: ArtifactTableCell) -> int:

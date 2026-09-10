@@ -13,6 +13,7 @@ from app.schemas.retrieval import (
     DocxRetrievalSourceLocator,
     LexicalRetrievalScore,
     PdfRetrievalSourceLocator,
+    RetrievalCandidateFailure,
     RetrievalCandidateIdentity,
     RetrievalDocumentMetadata,
     RetrievalEmbeddingIdentity,
@@ -291,6 +292,41 @@ def test_hybrid_response_accepts_one_list_hits_and_requires_contiguous_final_ran
                     rrf_score=1 / 61,
                 ),
             ],
+        )
+
+
+def test_single_route_rank_gap_requires_a_safe_candidate_failure() -> None:
+    failed_chunk_id = uuid4()
+    second = result_with_scores(
+        RetrievalScoreBreakdown(dense=DenseRetrievalScore(rank=2, distance=0.2)),
+        final_rank=2,
+    )
+    response = RetrievalResponse(
+        mode="dense",
+        embedding_identity=embedding_identity(),
+        results=[second],
+        candidate_failures=[
+            RetrievalCandidateFailure(
+                source_mode="dense",
+                rank=1,
+                chunk_id=failed_chunk_id,
+                stage="source_locator_mapping",
+                reason="invalid_source_locator",
+            )
+        ],
+    )
+
+    assert response.results[0].final_rank == 2
+    assert response.candidate_failures[0].chunk_id == failed_chunk_id
+    rendered = response.model_dump_json()
+    assert "invalid_source_locator" in rendered
+    assert "start_locator" not in rendered
+
+    with pytest.raises(ValidationError, match="account for every route rank"):
+        RetrievalResponse(
+            mode="dense",
+            embedding_identity=embedding_identity(),
+            results=[second],
         )
 
 

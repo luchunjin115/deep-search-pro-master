@@ -39,6 +39,10 @@ from app.schemas.auth import CurrentUser
 from app.schemas.knowledge import DocumentCreateInput, DocumentVersionCreateInput
 from app.services.documents import DocumentService
 from app.services.documents.indexing.service import DocumentIndexService
+from app.services.documents.parsers.docling import (
+    DoclingParseSnapshot,
+    DoclingTextSnapshot,
+)
 from app.services.files import FileService
 from app.services.retrieval import (
     FTS_BUILDER_VERSION,
@@ -73,6 +77,34 @@ class RevisedFakeEmbeddingProvider(FakeEmbeddingProvider):
         self._identity = replace(self.identity, revision="m2-fake-v2")
 
 
+class TruncatedPageDoclingProvider:
+    def parse(
+        self,
+        *,
+        source_name: str,
+        source_type: str,
+        content: bytes,
+    ) -> DoclingParseSnapshot:
+        del source_name, content
+        return DoclingParseSnapshot(
+            source_type=source_type,  # type: ignore[arg-type]
+            parser_version="m2-docling-v1+truncated-index-fake",
+            page_count=2,
+            items=[
+                DoclingTextSnapshot(
+                    text="x" * 300,
+                    label="text",
+                    page_number=1,
+                ),
+                DoclingTextSnapshot(
+                    text="lostpage",
+                    label="text",
+                    page_number=2,
+                ),
+            ],
+        )
+
+
 @dataclass(slots=True)
 class IndexServiceFixture:
     runtime: DatabaseRuntime
@@ -83,6 +115,7 @@ class IndexServiceFixture:
     document_id: UUID
     version_id: UUID
     file_id: UUID
+    source_storage_key: str
 
     def service(
         self,
@@ -170,6 +203,7 @@ def index_service_fixture(
             document_id=detail.document_id,
             version_id=version_id,
             file_id=uploaded.response.file_id,
+            source_storage_key=uploaded.storage_key,
         )
     finally:
         session.close()
@@ -327,8 +361,7 @@ def test_parse_failure_marks_first_index_failed_without_creating_index_set(
     index_service_fixture: IndexServiceFixture,
 ) -> None:
     fixture = index_service_fixture
-    upload_key = f"{fixture.tenant_id}/uploads/2026/08/{fixture.file_id}.pdf"
-    fixture.storage.delete(upload_key)
+    fixture.storage.delete(fixture.source_storage_key)
 
     with pytest.raises(DocumentParsingError):
         fixture.service().index_version(
@@ -345,6 +378,44 @@ def test_parse_failure_marks_first_index_failed_without_creating_index_set(
         assert file_row is not None
         assert version.parse_status == "failed"
         assert version.index_status == "failed"
+        assert file_row.status == "failed"
+        assert session.scalar(select(func.count(DocumentIndexSet.id))) == 0
+    finally:
+        session.close()
+
+
+def test_quality_rejection_marks_parse_and_index_failed_without_index_set(
+    index_service_fixture: IndexServiceFixture,
+) -> None:
+    fixture = index_service_fixture
+    quality_settings = fixture.settings.model_copy(
+        update={"native_text_min_characters": 500}
+    )
+    service = DocumentIndexService(
+        fixture.runtime.session_factory,
+        fixture.storage,
+        quality_settings,
+        FakeEmbeddingProvider(),
+        docling_provider=TruncatedPageDoclingProvider(),
+        clock=lambda: _NOW,
+    )
+
+    with pytest.raises(DocumentParsingError):
+        service.index_version(
+            fixture.user,
+            document_id=fixture.document_id,
+            version_id=fixture.version_id,
+        )
+
+    session = fixture.runtime.session_factory()
+    try:
+        version = session.get(DocumentVersion, fixture.version_id)
+        file_row = session.get(StoredFile, fixture.file_id)
+        assert version is not None
+        assert file_row is not None
+        assert version.parse_status == "failed"
+        assert version.index_status == "failed"
+        assert version.parsed_storage_key is None
         assert file_row.status == "failed"
         assert session.scalar(select(func.count(DocumentIndexSet.id))) == 0
     finally:

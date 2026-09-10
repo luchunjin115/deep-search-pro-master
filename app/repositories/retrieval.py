@@ -43,6 +43,7 @@ class DenseCandidateRecord:
     file_extension: str
     heading_path: list[object]
     page_numbers: list[object]
+    source_block_ids: list[object]
     source_spans: list[object]
     table_json: dict[str, object] | None
     distance: float
@@ -64,6 +65,7 @@ class LexicalCandidateRecord:
     file_extension: str
     heading_path: list[object]
     page_numbers: list[object]
+    source_block_ids: list[object]
     source_spans: list[object]
     table_json: dict[str, object] | None
     score: float
@@ -292,6 +294,7 @@ class RetrievalRepository:
                 file_extension=file_row.extension,
                 heading_path=chunk.heading_path,
                 page_numbers=chunk.page_numbers,
+                source_block_ids=chunk.source_block_ids,
                 source_spans=chunk.source_spans,
                 table_json=chunk.table_json,
                 distance=float(distance),
@@ -366,6 +369,7 @@ class RetrievalRepository:
                 file_extension=file_row.extension,
                 heading_path=chunk.heading_path,
                 page_numbers=chunk.page_numbers,
+                source_block_ids=chunk.source_block_ids,
                 source_spans=chunk.source_spans,
                 table_json=chunk.table_json,
                 score=float(score),

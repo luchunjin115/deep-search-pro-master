@@ -32,7 +32,7 @@ def test_structured_docx_preserves_body_order_headings_and_paragraphs() -> None:
     result = DocxParser().parse(io.BytesIO(make_structured_docx()))
 
     assert result.parser_name == "python-docx"
-    assert result.parser_version.startswith("m2-docx-v1+python-docx-")
+    assert result.parser_version.startswith("m2-docx-v2+python-docx-")
     assert result.source_type == "docx"
     assert result.block_count == 9
     assert result.paragraph_count == 7

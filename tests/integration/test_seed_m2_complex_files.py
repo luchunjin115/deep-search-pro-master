@@ -18,7 +18,12 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.db.session import create_database_runtime
 from app.models.knowledge import Document, DocumentAcl, DocumentVersion, StoredFile
-from app.services.documents.parsers import DocxParser, PdfParser, XlsxParser
+from app.services.documents.parsers import (
+    DocxImageOcrSegment,
+    DocxParser,
+    PdfParser,
+    XlsxParser,
+)
 from app.services.documents.parsers.base import SourceLocator
 from app.services.storage import LocalStorageBackend
 from scripts.seed_m2_complex_files import (
@@ -153,6 +158,21 @@ def test_complex_sources_are_deterministic_structured_and_keep_m2_v1_immutable()
     assert "常规正文要求" in native_text
     assert "QC-VISUAL-17" not in native_text
     assert "IMG-D17" not in native_text
+    assert [block.region for block in native_docx.region_blocks] == [
+        "header",
+        "footer",
+    ]
+    assert "QC-VISUAL-17" in native_docx.region_blocks[0].text
+    image_segments = [
+        segment
+        for block in native_docx.blocks
+        if block.kind == "paragraph"
+        for segment in block.segments
+        if isinstance(segment, DocxImageOcrSegment)
+    ]
+    assert len(image_segments) == 1
+    assert image_segments[0].text == ""
+    assert image_segments[0].provider_name == "disabled"
     word = WordDocument(io.BytesIO(visual_docx.content))
     assert "QC-VISUAL-17" in word.sections[0].header.paragraphs[0].text
     assert "QUALITY-LEAD" in word.sections[0].footer.paragraphs[0].text

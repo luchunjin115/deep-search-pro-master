@@ -33,6 +33,7 @@ from app.services.storage import StorageBackend
 
 if TYPE_CHECKING:
     from app.core.config import Settings
+    from app.services.documents.parsers.docling import DoclingProvider
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +66,7 @@ class DocumentIndexService:
         settings: Settings,
         embedding_provider: EmbeddingProvider,
         *,
+        docling_provider: DoclingProvider | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._session_factory = session_factory
@@ -76,6 +78,7 @@ class DocumentIndexService:
             session_factory,
             storage,
             settings,
+            docling_provider=docling_provider,
             clock=self._clock,
         )
         self._chunker = DocumentChunkService(

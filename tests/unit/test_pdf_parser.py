@@ -19,6 +19,7 @@ from tests.fixtures.pdf_factory import (
     make_low_text_pdf,
     make_scanned_image_pdf,
     make_text_pdf,
+    make_two_column_text_pdf,
 )
 
 
@@ -27,7 +28,7 @@ def test_text_pdf_preserves_pages_text_headings_and_empty_page_warning() -> None
     result = parser.parse(io.BytesIO(make_text_pdf()))
 
     assert result.parser_name == "pymupdf"
-    assert result.parser_version.startswith("m2-pdf-v1+pymupdf-")
+    assert result.parser_version.startswith("m2-pdf-v2+pymupdf-")
     assert result.page_count == 3
     assert [page.page_number for page in result.pages] == [1, 2, 3]
     assert "Synthetic Product Manual" in result.pages[0].text
@@ -44,6 +45,37 @@ def test_text_pdf_preserves_pages_text_headings_and_empty_page_warning() -> None
     assert result.pages[1].heading_hints[0].level == 2
     assert [warning.code for warning in result.warnings] == ["empty_page"]
     assert result.warnings[0].locator.page_number == 3
+
+
+def test_two_column_pdf_preserves_physical_lines_geometry_and_real_ranges() -> None:
+    page = PdfParser().parse(io.BytesIO(make_two_column_text_pdf())).pages[0]
+
+    left_heading = next(line for line in page.layout_lines if line.text == "Left Sales")
+    right_heading = next(
+        line for line in page.layout_lines if line.text == "Right Actions"
+    )
+    left_body = next(
+        line for line in page.layout_lines if line.text == "Units sold: 139"
+    )
+    right_body = next(
+        line for line in page.layout_lines if line.text == "Daily budget: 18 EUR"
+    )
+
+    assert [line.line_number for line in page.layout_lines] == list(
+        range(1, len(page.layout_lines) + 1)
+    )
+    assert left_heading.bounding_box.right < right_heading.bounding_box.left
+    assert left_body.bounding_box.right < right_body.bounding_box.left
+    for line in (left_heading, right_heading, left_body, right_body):
+        assert line.character_start is not None
+        assert line.character_end is not None
+        assert page.text[line.character_start : line.character_end] == line.text
+
+    hints = {hint.text: hint for hint in page.heading_hints}
+    assert hints["Left Sales"].layout_line_number == left_heading.line_number
+    assert hints["Left Sales"].bounding_box == left_heading.bounding_box
+    assert hints["Right Actions"].layout_line_number == right_heading.line_number
+    assert hints["Right Actions"].bounding_box == right_heading.bounding_box
 
 
 def test_image_only_page_is_flagged_as_scanned_without_ocr_text() -> None:

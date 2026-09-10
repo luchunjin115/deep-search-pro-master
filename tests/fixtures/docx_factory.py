@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+from xml.etree import ElementTree
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from docx import Document
@@ -12,6 +13,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor, Twips
+from PIL import Image, ImageDraw
 
 _TABLE_WIDTHS_DXA = (2700, 6660)
 
@@ -79,6 +81,85 @@ def make_docx_with_unsafe_member() -> bytes:
     output = io.BytesIO(make_empty_docx())
     with ZipFile(output, mode="a", compression=ZIP_DEFLATED) as archive:
         archive.writestr("../synthetic-private.txt", b"not extracted")
+    return output.getvalue()
+
+
+def make_docx_with_inline_images(*, repeated: bool = False) -> bytes:
+    """Create header/body/footer content with text around inline image anchors."""
+
+    document = Document()
+    _apply_compact_reference_guide(document)
+    document.sections[0].header.paragraphs[0].text = "CONTROL CODE: QC-VISUAL-17"
+    document.sections[0].footer.paragraphs[0].text = "OWNER: QUALITY-LEAD"
+    paragraph = document.add_paragraph()
+    paragraph.add_run("BEFORE IMAGE")
+    image_bytes = _make_test_card()
+    paragraph.add_run().add_picture(io.BytesIO(image_bytes), width=Inches(2.5))
+    if repeated:
+        paragraph.add_run().add_picture(io.BytesIO(image_bytes), width=Inches(2.5))
+    paragraph.add_run("AFTER IMAGE")
+    output = io.BytesIO()
+    document.save(output)
+    return output.getvalue()
+
+
+def make_docx_with_external_image_relationship() -> bytes:
+    """Turn one embedded image relation into an external target for rejection tests."""
+
+    source = make_docx_with_inline_images()
+    input_stream = io.BytesIO(source)
+    output = io.BytesIO()
+    relationships_name = "word/_rels/document.xml.rels"
+    namespace = "http://schemas.openxmlformats.org/package/2006/relationships"
+    with (
+        ZipFile(input_stream) as input_archive,
+        ZipFile(
+            output,
+            mode="w",
+            compression=ZIP_DEFLATED,
+        ) as output_archive,
+    ):
+        for member in input_archive.infolist():
+            payload = input_archive.read(member.filename)
+            if member.filename == relationships_name:
+                root = ElementTree.fromstring(payload)
+                for relationship in root.findall(f"{{{namespace}}}Relationship"):
+                    if relationship.get("Type", "").endswith("/image"):
+                        relationship.set("Target", "https://invalid.example/image.png")
+                        relationship.set("TargetMode", "External")
+                payload = ElementTree.tostring(
+                    root,
+                    encoding="utf-8",
+                    xml_declaration=True,
+                )
+            output_archive.writestr(member, payload)
+    return output.getvalue()
+
+
+def make_docx_with_corrupt_image() -> bytes:
+    """Keep the image relationship but replace its package bytes with invalid data."""
+
+    source = make_docx_with_inline_images()
+    input_stream = io.BytesIO(source)
+    output = io.BytesIO()
+    with (
+        ZipFile(input_stream) as input_archive,
+        ZipFile(output, mode="w", compression=ZIP_DEFLATED) as output_archive,
+    ):
+        for member in input_archive.infolist():
+            payload = input_archive.read(member.filename)
+            if member.filename.startswith("word/media/"):
+                payload = b"not-a-valid-image"
+            output_archive.writestr(member, payload)
+    return output.getvalue()
+
+
+def _make_test_card() -> bytes:
+    image = Image.new("RGB", (640, 180), "white")
+    drawing = ImageDraw.Draw(image)
+    drawing.text((20, 60), "ACTION: QUARANTINE 12 PCS", fill="black")
+    output = io.BytesIO()
+    image.save(output, format="PNG")
     return output.getvalue()
 
 

@@ -5,9 +5,14 @@ from __future__ import annotations
 from typing import TypeAlias, assert_never
 
 from app.services.documents.artifacts import (
+    NATIVE_ADAPTER_VERSION,
+    NATIVE_PDF_ADAPTER_VERSION,
     ArtifactBlock,
+    ArtifactBoundingBox,
+    ArtifactDocxSource,
     ArtifactHeadingHint,
     ArtifactPageProperties,
+    ArtifactPdfLayoutLine,
     ArtifactTableBlock,
     ArtifactTableCell,
     ArtifactTableRow,
@@ -19,9 +24,12 @@ from app.services.documents.artifacts import (
 from app.services.documents.parsers.base import SourceLocator
 from app.services.documents.parsers.csv import CsvParseResult
 from app.services.documents.parsers.docx import (
+    DocxImageOcrSegment,
     DocxParagraphBlock,
     DocxParseResult,
+    DocxRegionTextBlock,
     DocxTableBlock,
+    DocxTextSegment,
 )
 from app.services.documents.parsers.pdf import PdfParseResult
 from app.services.documents.parsers.xlsx import (
@@ -42,18 +50,23 @@ def adapt_native_parse_result(
 ) -> CanonicalParsedArtifact:
     """Dispatch one already-safe Native result into the canonical contract."""
 
+    adapter_version: str
     if isinstance(result, PdfParseResult):
         blocks = _adapt_pdf(result)
         source_character_count = sum(page.character_count for page in result.pages)
+        adapter_version = NATIVE_PDF_ADAPTER_VERSION
     elif isinstance(result, DocxParseResult):
         blocks = _adapt_docx(result)
         source_character_count = result.character_count
+        adapter_version = NATIVE_ADAPTER_VERSION
     elif isinstance(result, XlsxParseResult):
         blocks = _adapt_xlsx(result)
         source_character_count = result.character_count
+        adapter_version = NATIVE_ADAPTER_VERSION
     elif isinstance(result, CsvParseResult):
         blocks = _adapt_csv(result)
         source_character_count = result.character_count
+        adapter_version = NATIVE_ADAPTER_VERSION
     else:
         assert_never(result)
     return build_canonical_artifact(
@@ -71,6 +84,7 @@ def adapt_native_parse_result(
             for warning in result.warnings
         ],
         source_character_count=source_character_count,
+        adapter_version=adapter_version,
         page_count=(result.page_count if isinstance(result, PdfParseResult) else None),
         sheet_count=(
             result.sheet_count if isinstance(result, XlsxParseResult) else None
@@ -96,41 +110,100 @@ def _adapt_pdf(result: PdfParseResult) -> list[ArtifactBlock]:
                     level=hint.level,
                     font_size=hint.font_size,
                     locator=hint.locator,
+                    layout_line_number=hint.layout_line_number,
+                    bounding_box=_adapt_pdf_bounding_box(hint.bounding_box),
                 )
                 for hint in page.heading_hints
+            ],
+            pdf_layout_lines=[
+                ArtifactPdfLayoutLine(
+                    line_number=line.line_number,
+                    text=line.text,
+                    character_start=line.character_start,
+                    character_end=line.character_end,
+                    locator=line.locator,
+                    bounding_box=_adapt_pdf_bounding_box(line.bounding_box),
+                )
+                for line in page.layout_lines
             ],
         )
         for page in result.pages
     ]
 
 
+def _adapt_pdf_bounding_box(source: object) -> ArtifactBoundingBox:
+    return ArtifactBoundingBox.model_validate(source, from_attributes=True)
+
+
 def _adapt_docx(result: DocxParseResult) -> list[ArtifactBlock]:
     blocks: list[ArtifactBlock] = []
-    for source in result.blocks:
-        if isinstance(source, DocxParagraphBlock):
+    for region_source in result.region_blocks:
+        if region_source.region == "header":
+            blocks.append(_adapt_docx_region(region_source, len(blocks) + 1))
+    for body_source in result.blocks:
+        if isinstance(body_source, DocxParagraphBlock):
+            if body_source.segments:
+                for segment in body_source.segments:
+                    if isinstance(segment, DocxTextSegment):
+                        blocks.append(
+                            ArtifactTextBlock(
+                                block_id=_block_id(len(blocks) + 1),
+                                text=segment.text,
+                                locator=segment.locator,
+                                heading_level=body_source.heading_level,
+                                heading_path=body_source.heading_path,
+                                style_name=body_source.style_name,
+                            )
+                        )
+                    elif isinstance(segment, DocxImageOcrSegment):
+                        blocks.append(
+                            ArtifactTextBlock(
+                                block_id=_block_id(len(blocks) + 1),
+                                source_kind="docx_image_ocr",
+                                docx_source=ArtifactDocxSource(
+                                    run_number=segment.run_number,
+                                    image_number=segment.image_number,
+                                    image_sha256=segment.image_sha256,
+                                    image_size_bytes=segment.image_size_bytes,
+                                    image_width=segment.image_width,
+                                    image_height=segment.image_height,
+                                    content_type=segment.content_type,
+                                    ocr_provider_name=segment.provider_name,
+                                    ocr_provider_version=segment.provider_version,
+                                    ocr_mean_confidence=segment.mean_confidence,
+                                ),
+                                text=segment.text,
+                                locator=segment.locator,
+                                heading_path=body_source.heading_path,
+                                style_name=body_source.style_name,
+                            )
+                        )
+                    else:
+                        assert_never(segment)
+                continue
             blocks.append(
                 ArtifactTextBlock(
-                    block_id=_block_id(source.block_number),
-                    text=source.text,
-                    locator=source.locator,
-                    heading_level=source.heading_level,
-                    heading_path=source.heading_path,
-                    style_name=source.style_name,
+                    block_id=_block_id(len(blocks) + 1),
+                    text=body_source.text,
+                    locator=body_source.locator,
+                    heading_level=body_source.heading_level,
+                    heading_path=body_source.heading_path,
+                    style_name=body_source.style_name,
                 )
             )
             continue
-        if isinstance(source, DocxTableBlock):
+        if isinstance(body_source, DocxTableBlock):
             blocks.append(
                 ArtifactTableBlock(
-                    block_id=_block_id(source.block_number),
+                    block_id=_block_id(len(blocks) + 1),
                     source_kind="docx_table",
-                    locator=source.locator,
-                    heading_path=source.heading_path,
+                    locator=body_source.locator,
+                    heading_path=body_source.heading_path,
                     rows=[
                         ArtifactTableRow(
                             row_number=row.row_number,
                             is_empty=all(not cell.text.strip() for cell in row.cells),
-                            locator=source.locator,
+                            locator=body_source.locator,
                             cells=[
                                 ArtifactTableCell(
                                     column_number=cell.column_number,
@@ -142,13 +215,33 @@ def _adapt_docx(result: DocxParseResult) -> list[ArtifactBlock]:
                                 for cell in row.cells
                             ],
                         )
-                        for row in source.rows
+                        for row in body_source.rows
                     ],
                 )
             )
             continue
-        assert_never(source)
+        assert_never(body_source)
+    for region_source in result.region_blocks:
+        if region_source.region == "footer":
+            blocks.append(_adapt_docx_region(region_source, len(blocks) + 1))
     return blocks
+
+
+def _adapt_docx_region(
+    source: DocxRegionTextBlock,
+    block_number: int,
+) -> ArtifactTextBlock:
+    return ArtifactTextBlock(
+        block_id=_block_id(block_number),
+        source_kind=("docx_header" if source.region == "header" else "docx_footer"),
+        docx_source=ArtifactDocxSource(
+            section_number=source.section_number,
+            region_block_number=source.region_block_number,
+            content_kind=source.content_kind,
+        ),
+        text=source.text,
+        locator=source.locator,
+    )
 
 
 def _adapt_xlsx(result: XlsxParseResult) -> list[ArtifactBlock]:

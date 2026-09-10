@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
 import json
+import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,14 +23,25 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "output" / "m2_parser_router_report.json"
 
 
-def run_router_verification(settings: Settings) -> dict[str, Any]:
+def run_router_verification(
+    settings: Settings,
+    *,
+    only_document: str | None = None,
+) -> dict[str, Any]:
     """Return an auditable Native/Docling/Router comparison for five sources."""
 
     if settings.docling_backend != "docling":
         raise RuntimeError("Set DOCLING_BACKEND=docling for real Router verification")
     router = DocumentParserRouter(settings)
     documents: list[dict[str, Any]] = []
-    for source in generate_complex_sources(load_complex_seed_definition()):
+    sources = generate_complex_sources(load_complex_seed_definition())
+    if only_document is not None:
+        sources = [
+            source for source in sources if source.definition["key"] == only_document
+        ]
+        if not sources:
+            raise ValueError("unknown complex-document verification key")
+    for source in sources:
         key = source.definition["key"]
         result = router.parse(
             source_name=source.definition["original_name"],
@@ -58,6 +71,16 @@ def run_router_verification(settings: Settings) -> dict[str, Any]:
                 "route": result.route,
                 "reasons": result.reasons,
                 "complexity_tags": result.quality.complexity_tags,
+                "native_text_health": (
+                    result.quality.native_text_health.model_dump(mode="json")
+                    if result.quality.native_text_health is not None
+                    else None
+                ),
+                "post_parse_quality": (
+                    result.post_parse_quality.model_dump(mode="json")
+                    if result.post_parse_quality is not None
+                    else None
+                ),
                 "native": {
                     "parser": result.native_artifact.parser.model_dump(mode="json"),
                     "warnings": [
@@ -114,12 +137,22 @@ def run_router_verification(settings: Settings) -> dict[str, Any]:
     }
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--document", default=None)
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
+    logging.basicConfig(level=logging.INFO)
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    report = run_router_verification(Settings())
-    DEFAULT_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    DEFAULT_OUTPUT_PATH.write_text(
+    report = run_router_verification(Settings(), only_document=args.document)
+    output_path = args.output.resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )

@@ -18,6 +18,7 @@ from app.services.documents.artifacts import (
     CanonicalParsedArtifact,
 )
 from app.services.documents.chunking.contracts import (
+    ChunkHeadingSource,
     ChunkingConfig,
     ChunkOverlap,
     ChunkSourceSpan,
@@ -38,6 +39,35 @@ from app.services.documents.parsers.base import SourceLocator
 
 _LIST_MARKER = re.compile(
     r"^(?:[-*–—]\s+|[•▪◦]\s*|(?:\d{1,4}|[A-Za-z])[.)、]\s*)",
+)
+_BULLET_HEADING_MARKER = re.compile(r"^(?:[-*–—]\s+|[•▪◦\x07]\s*)")
+_OUTLINE_PREFIX = re.compile(
+    r"^(?:"
+    r"(?:\d{1,4}(?:\.\d{1,4})*)[.)、:]?"
+    r"|[A-Za-z][.)、]"
+    r"|[（(]?[一二三四五六七八九十]+[)）.、]"
+    r")\s*$",
+)
+_HEADING_LABEL_PREFIX = re.compile(
+    r"^(?:"
+    r"(?:\d{1,4}(?:\.\d{1,4})*)[.)、:]"
+    r"|[A-Za-z][.)、]"
+    r"|[（(]?[一二三四五六七八九十]+[)）.、]"
+    r")\s+",
+)
+_ROOT_SECTION_PREFIX = re.compile(
+    r"^(?:part|annex|chapter|section)\s+[A-Za-z0-9]",
+    flags=re.IGNORECASE,
+)
+_CURRENCY_VALUE = re.compile(
+    r"^(?:approximately\s+)?(?:EUR|USD|GBP|CNY|JPY|€|\$|£|¥)\s*"
+    r"\d[\d.,]*(?:\s+(?:billion|million|thousand))?(?:\s+per\s+\w+)?$",
+    flags=re.IGNORECASE,
+)
+_REFERENCE_CODE_VALUE = re.compile(r"^[A-Z]?\d+(?:[/_-]\d+){1,}[A-Z]?$", re.IGNORECASE)
+_FIELD_LABEL = re.compile(
+    r"(?:number|identifier|reference|code|date|country|category|brand|model|type)$",
+    flags=re.IGNORECASE,
 )
 _BOUNDARY_PATTERNS = (
     re.compile(r"\n\s*\n"),
@@ -66,6 +96,28 @@ class TextChunkingResult(M1Schema):
             dict.fromkeys(self.deferred_table_block_ids)
         ):
             raise ValueError("deferred table block IDs must be unique and ordered")
+        heading_exclusions = {
+            (
+                span.block_id,
+                span.character_start,
+                span.character_end,
+                span.text,
+            )
+            for span in self.excluded_spans
+            if span.reason == "heading_metadata"
+        }
+        if any(
+            (
+                source.source_span.block_id,
+                source.source_span.character_start,
+                source.source_span.character_end,
+                source.source_text,
+            )
+            not in heading_exclusions
+            for chunk in self.chunks
+            for source in chunk.heading_sources
+        ):
+            raise ValueError("heading source is missing its exact exclusion audit")
         return self
 
 
@@ -83,12 +135,14 @@ class _TextUnit:
     text: str
     characters: tuple[_MappedCharacter, ...]
     heading_path: tuple[str, ...]
+    heading_sources: tuple[ChunkHeadingSource, ...]
     role: Literal["heading", "paragraph", "list_item"]
 
 
 @dataclass(slots=True)
 class _TextGroup:
     heading_path: tuple[str, ...]
+    heading_sources: tuple[ChunkHeadingSource, ...]
     text_parts: list[str] = field(default_factory=list)
     characters: list[_MappedCharacter | None] = field(default_factory=list)
     last_role: Literal["heading", "paragraph", "list_item"] | None = None
@@ -113,6 +167,8 @@ class _LineSlice:
     normalized: NormalizedSourceText
     start: int
     end: int
+    layout_line_number: int | None = None
+    bounding_box: ArtifactBoundingBox | None = None
 
     @property
     def text(self) -> str:
@@ -124,6 +180,23 @@ class _ExcludedLineKey:
     block_id: str
     start: int
     end: int
+
+
+@dataclass(frozen=True, slots=True)
+class _HeadingMatch:
+    text: str
+    level: int
+    start: int
+    end: int
+    lane: int | None = None
+    force_root: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _HeadingSourceReference:
+    heading_text: str
+    source_text: str
+    source_span: ChunkSourceSpan
 
 
 class StructureAwareTextChunker:
@@ -231,14 +304,21 @@ class StructureAwareTextChunker:
         excluded: list[ExcludedChunkSpan] = []
         deferred: list[str] = []
         current: _TextGroup | None = None
-        pdf_headings: dict[int, str] = {}
+        pdf_headings: dict[int, _HeadingSourceReference] = {}
 
         def append_unit(unit: _TextUnit) -> None:
             nonlocal current
-            if current is None or current.heading_path != unit.heading_path:
+            if (
+                current is None
+                or current.heading_path != unit.heading_path
+                or current.heading_sources != unit.heading_sources
+            ):
                 if current is not None:
                     groups.append(current)
-                current = _TextGroup(heading_path=unit.heading_path)
+                current = _TextGroup(
+                    heading_path=unit.heading_path,
+                    heading_sources=unit.heading_sources,
+                )
             current.append(unit)
 
         def flush() -> None:
@@ -270,56 +350,125 @@ class StructureAwareTextChunker:
                 append_unit(_docx_unit(block, normalized))
                 continue
 
-            hints = {
-                normalize_source_text(hint.text).text: hint.level
-                for hint in sorted(
-                    block.heading_hints,
-                    key=lambda item: (item.level, item.text),
-                )
-            }
-            for line_index, line in enumerate(_line_slices(block, normalized)):
-                exclusion_reason = repeated_lines.get(_line_key(line))
+            lines = _pdf_slices(block, normalized)
+            heading_lanes = _parallel_heading_lanes(block)
+            heading_matches, consumed_heading_lines = _prepared_heading_matches(
+                block,
+                lines,
+                heading_lanes,
+            )
+            lane_headings: dict[int, dict[int, _HeadingSourceReference]] = {}
+            for line_index, line in enumerate(lines):
+                if line_index in consumed_heading_lines:
+                    if not any(
+                        heading.start <= line.start and line.end <= heading.end
+                        for retained_index, heading in heading_matches.items()
+                        if retained_index not in consumed_heading_lines
+                    ):
+                        excluded.append(
+                            _excluded_span_from_range(
+                                block,
+                                normalized,
+                                line.start,
+                                line.end,
+                                reason="noise",
+                                bounding_box=line.bounding_box,
+                            )
+                        )
+                    continue
+                exclusion_reason = _slice_exclusion_reason(line, repeated_lines)
                 if exclusion_reason is not None:
                     excluded.append(
-                        ExcludedChunkSpan(
-                            block_id=block.block_id,
+                        _excluded_span_from_range(
+                            block,
+                            normalized,
+                            line.start,
+                            line.end,
                             reason=exclusion_reason,
-                            text=line.text,
-                            locator=block.locator,
                             bounding_box=(
-                                block.bounding_box
+                                line.bounding_box or block.bounding_box
                                 if line.start == 0 and line.end == len(normalized.text)
-                                else None
+                                else line.bounding_box
                             ),
                         )
                     )
                     continue
-                heading_level = (
-                    block.heading_level if line_index == 0 else None
-                ) or hints.get(line.text)
-                if block.heading_path:
-                    heading_path = tuple(block.heading_path)
-                    if heading_level is not None:
-                        pdf_headings = {
-                            level: value
-                            for level, value in pdf_headings.items()
-                            if level < heading_level
-                        }
-                        pdf_headings[heading_level] = line.text
-                elif heading_level is not None:
-                    pdf_headings = {
-                        level: value
-                        for level, value in pdf_headings.items()
-                        if level < heading_level
-                    }
-                    pdf_headings[heading_level] = line.text
-                    heading_path = tuple(
-                        pdf_headings[level] for level in sorted(pdf_headings)
+
+                heading = heading_matches.get(line_index)
+                if heading is not None:
+                    heading_level = (
+                        1
+                        if heading.force_root
+                        or _ROOT_SECTION_PREFIX.match(heading.text)
+                        else heading.level
                     )
-                else:
-                    heading_path = tuple(
-                        pdf_headings[level] for level in sorted(pdf_headings)
+                    heading_source = _heading_source_reference(
+                        block,
+                        normalized,
+                        heading,
+                        fallback_bounding_box=line.bounding_box,
                     )
+                    excluded.append(
+                        _excluded_span_from_range(
+                            block,
+                            normalized,
+                            heading.start,
+                            heading.end,
+                            reason="heading_metadata",
+                            bounding_box=line.bounding_box,
+                        )
+                    )
+                    if heading.lane is None:
+                        pdf_headings = _updated_heading_stack(
+                            pdf_headings,
+                            level=heading_level,
+                            source=heading_source,
+                        )
+                        lane_headings.clear()
+                    else:
+                        lane_headings[heading.lane] = _updated_heading_stack(
+                            {
+                                level: source
+                                for level, source in pdf_headings.items()
+                                if level < heading_level
+                            },
+                            level=heading_level,
+                            source=heading_source,
+                        )
+                    body_start, body_end = _trim_range(
+                        normalized.text,
+                        heading.end,
+                        line.end,
+                    )
+                    if body_start >= body_end:
+                        continue
+                    heading_path, heading_sources = _pdf_heading_context(
+                        block,
+                        pdf_headings,
+                        lane_headings,
+                        line,
+                        preferred_lane=heading.lane,
+                    )
+                    append_unit(
+                        _unit_from_slice(
+                            block,
+                            normalized,
+                            body_start,
+                            body_end,
+                            heading_path=heading_path,
+                            heading_sources=heading_sources,
+                            role=_text_role(normalized.text[body_start:body_end]),
+                            bounding_box=line.bounding_box,
+                        )
+                    )
+                    continue
+
+                heading_path, heading_sources = _pdf_heading_context(
+                    block,
+                    pdf_headings,
+                    lane_headings,
+                    line,
+                )
                 append_unit(
                     _unit_from_slice(
                         block,
@@ -327,11 +476,9 @@ class StructureAwareTextChunker:
                         line.start,
                         line.end,
                         heading_path=heading_path,
-                        role=(
-                            "heading"
-                            if heading_level is not None
-                            else _text_role(line.text)
-                        ),
+                        heading_sources=heading_sources,
+                        role=_text_role(line.text),
+                        bounding_box=line.bounding_box,
                     )
                 )
         flush()
@@ -413,6 +560,7 @@ class StructureAwareTextChunker:
                     retrieval_text=retrieval_text,
                     token_count=token_count,
                     heading_path=list(group.heading_path),
+                    heading_sources=list(group.heading_sources),
                     source_block_ids=list(
                         dict.fromkeys(span.block_id for span in source_spans)
                     ),
@@ -459,6 +607,7 @@ def _docx_unit(
         0,
         len(normalized.text),
         heading_path=tuple(block.heading_path),
+        heading_sources=(),
         role=role,
     )
 
@@ -474,7 +623,9 @@ def _unit_from_slice(
     end: int,
     *,
     heading_path: tuple[str, ...],
+    heading_sources: tuple[ChunkHeadingSource, ...],
     role: Literal["heading", "paragraph", "list_item"],
+    bounding_box: ArtifactBoundingBox | None = None,
 ) -> _TextUnit:
     return _TextUnit(
         text=normalized.text[start:end],
@@ -484,11 +635,12 @@ def _unit_from_slice(
                 source_start=character.source_start,
                 source_end=character.source_end,
                 locator=block.locator,
-                bounding_box=block.bounding_box,
+                bounding_box=bounding_box or block.bounding_box,
             )
             for character in normalized.characters[start:end]
         ),
         heading_path=heading_path,
+        heading_sources=heading_sources,
         role=role,
     )
 
@@ -508,6 +660,532 @@ def _line_slices(
         if match.start() == len(normalized.text):
             break
     return lines
+
+
+def _pdf_slices(
+    block: ArtifactTextBlock,
+    normalized: NormalizedSourceText,
+) -> list[_LineSlice]:
+    fallback = _line_slices(block, normalized)
+    if not block.pdf_layout_lines:
+        return fallback
+
+    located: list[_LineSlice] = []
+    for layout_line in block.pdf_layout_lines:
+        if layout_line.character_start is None or layout_line.character_end is None:
+            continue
+        normalized_range = _normalized_range_for_source(
+            normalized,
+            layout_line.character_start,
+            layout_line.character_end,
+        )
+        if normalized_range is None:
+            continue
+        start, end = normalized_range
+        if _comparable_text(normalized.text[start:end]) != _comparable_text(
+            layout_line.text
+        ):
+            continue
+        located.append(
+            _LineSlice(
+                block=block,
+                normalized=normalized,
+                start=start,
+                end=end,
+                layout_line_number=layout_line.line_number,
+                bounding_box=layout_line.bounding_box,
+            )
+        )
+
+    if not located:
+        return fallback
+
+    located.sort(key=lambda item: (item.start, item.end, item.layout_line_number or 0))
+    result = list(located)
+    for line in fallback:
+        cursor = line.start
+        for item in located:
+            if item.end <= line.start or item.start >= line.end:
+                continue
+            residual_start, residual_end = _trim_range(
+                normalized.text,
+                cursor,
+                max(cursor, item.start),
+            )
+            if residual_start < residual_end:
+                result.append(
+                    _LineSlice(block, normalized, residual_start, residual_end)
+                )
+            cursor = max(cursor, item.end)
+        residual_start, residual_end = _trim_range(
+            normalized.text,
+            cursor,
+            line.end,
+        )
+        if residual_start < residual_end:
+            result.append(_LineSlice(block, normalized, residual_start, residual_end))
+    return sorted(
+        result,
+        key=lambda item: (item.start, item.end, item.layout_line_number or 0),
+    )
+
+
+def _normalized_range_for_source(
+    normalized: NormalizedSourceText,
+    source_start: int,
+    source_end: int,
+) -> tuple[int, int] | None:
+    indexes = [
+        index
+        for index, character in enumerate(normalized.characters)
+        if character.source_end > source_start and character.source_start < source_end
+    ]
+    if not indexes:
+        return None
+    return _trim_range(normalized.text, indexes[0], indexes[-1] + 1)
+
+
+def _comparable_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _heading_match(
+    block: ArtifactTextBlock,
+    line: _LineSlice,
+    *,
+    line_index: int,
+    heading_lanes: dict[int, int],
+) -> _HeadingMatch | None:
+    if block.heading_level is not None and line_index == 0:
+        text = block.heading_path[-1] if block.heading_path else line.text
+        return _HeadingMatch(
+            text=_heading_label(text),
+            level=block.heading_level,
+            start=line.start,
+            end=line.end,
+        )
+
+    if line.layout_line_number is not None:
+        located_candidates = [
+            hint
+            for hint in block.heading_hints
+            if hint.layout_line_number == line.layout_line_number
+            and hint.locator.page_number == block.locator.page_number
+            and _is_structural_heading_text(hint.text)
+            and hint.layout_line_number not in _rejected_field_label_line_numbers(block)
+        ]
+        if len(located_candidates) != 1:
+            return None
+        hint = located_candidates[0]
+        return _HeadingMatch(
+            text=_heading_label(hint.text),
+            level=hint.level,
+            start=line.start,
+            end=line.end,
+            lane=heading_lanes.get(line.layout_line_number),
+        )
+
+    legacy_candidates: list[_HeadingMatch] = []
+    for hint in block.heading_hints:
+        if (
+            hint.layout_line_number is not None
+            or hint.locator.page_number != block.locator.page_number
+            or not _is_structural_heading_text(hint.text)
+        ):
+            continue
+        matched = _legacy_heading_range(line.text, hint.text)
+        if matched is None:
+            continue
+        relative_start, relative_end = matched
+        legacy_candidates.append(
+            _HeadingMatch(
+                text=_heading_label(hint.text),
+                level=hint.level,
+                start=line.start + relative_start,
+                end=line.start + relative_end,
+            )
+        )
+    unique = {
+        (item.text, item.level, item.start, item.end): item
+        for item in legacy_candidates
+    }
+    return next(iter(unique.values())) if len(unique) == 1 else None
+
+
+def _prepared_heading_matches(
+    block: ArtifactTextBlock,
+    lines: list[_LineSlice],
+    heading_lanes: dict[int, int],
+) -> tuple[dict[int, _HeadingMatch], set[int]]:
+    matches = {
+        line_index: heading
+        for line_index, line in enumerate(lines)
+        if (
+            heading := _heading_match(
+                block,
+                line,
+                line_index=line_index,
+                heading_lanes=heading_lanes,
+            )
+        )
+        is not None
+    }
+    consumed: set[int] = set()
+    composite_starts: set[int] = set()
+    for line_index in sorted(matches):
+        if line_index in consumed:
+            continue
+        run = [line_index]
+        while True:
+            next_index = run[-1] + 1
+            if next_index not in matches or next_index in consumed:
+                break
+            if not _can_join_heading_lines(
+                lines[run[-1]],
+                matches[run[-1]],
+                lines[next_index],
+                matches[next_index],
+            ):
+                break
+            run.append(next_index)
+        if len(run) == 1:
+            continue
+        first = matches[run[0]]
+        last = matches[run[-1]]
+        matches[run[0]] = _HeadingMatch(
+            text=" ".join(matches[index].text for index in run),
+            level=first.level,
+            start=first.start,
+            end=last.end,
+            lane=first.lane,
+        )
+        consumed.update(run[1:])
+        composite_starts.add(run[0])
+
+    for composite_index in sorted(composite_starts):
+        previous_index = composite_index - 1
+        if previous_index not in matches or previous_index in consumed:
+            continue
+        if not _is_masthead_before_main_title(
+            lines[previous_index],
+            matches[previous_index],
+            lines[composite_index],
+            matches[composite_index],
+        ):
+            continue
+        consumed.add(previous_index)
+        composite = matches[composite_index]
+        matches[composite_index] = _HeadingMatch(
+            text=composite.text,
+            level=composite.level,
+            start=composite.start,
+            end=composite.end,
+            lane=composite.lane,
+            force_root=True,
+        )
+    return matches, consumed
+
+
+def _can_join_heading_lines(
+    first_line: _LineSlice,
+    first: _HeadingMatch,
+    second_line: _LineSlice,
+    second: _HeadingMatch,
+) -> bool:
+    first_box = first_line.bounding_box
+    second_box = second_line.bounding_box
+    if (
+        first.level != second.level
+        or first.lane is not None
+        or second.lane is not None
+        or first_box is None
+        or second_box is None
+        or first_box.page_number != second_box.page_number
+    ):
+        return False
+    height = max(first_box.bottom - first_box.top, second_box.bottom - second_box.top)
+    return (
+        abs(first_box.left - second_box.left) <= 2.0
+        and 0 < second_box.top - first_box.top <= height * 1.8
+        and not first_line.normalized.text[first.end : second.start].strip()
+    )
+
+
+def _is_masthead_before_main_title(
+    masthead_line: _LineSlice,
+    masthead: _HeadingMatch,
+    title_line: _LineSlice,
+    title: _HeadingMatch,
+) -> bool:
+    masthead_box = masthead_line.bounding_box
+    title_box = title_line.bounding_box
+    return bool(
+        masthead_box is not None
+        and title_box is not None
+        and masthead.text.isupper()
+        and title.text.isupper()
+        and len(title.text) > len(masthead.text)
+        and abs(masthead_box.left - title_box.left) <= 2.0
+        and not masthead_line.normalized.text[masthead.end : title.start].strip()
+    )
+
+
+def _is_structural_heading_text(value: str) -> bool:
+    normalized = normalize_source_text(value).text
+    return bool(
+        normalized
+        and not _BULLET_HEADING_MARKER.match(normalized)
+        and not _CURRENCY_VALUE.fullmatch(normalized)
+        and not _REFERENCE_CODE_VALUE.fullmatch(normalized)
+    )
+
+
+def _rejected_field_label_line_numbers(block: ArtifactTextBlock) -> set[int]:
+    located = [
+        hint
+        for hint in block.heading_hints
+        if hint.layout_line_number is not None and hint.bounding_box is not None
+    ]
+    rejected: set[int] = set()
+    for label in located:
+        if not _FIELD_LABEL.search(normalize_source_text(label.text).text):
+            continue
+        label_box = label.bounding_box
+        if label_box is None or label.layout_line_number is None:
+            continue
+        for value in located:
+            value_box = value.bounding_box
+            if (
+                value_box is None
+                or value.layout_line_number is None
+                or value.layout_line_number == label.layout_line_number
+                or not _looks_like_data_value(value.text)
+                or label_box.page_number != value_box.page_number
+            ):
+                continue
+            vertical_overlap = min(label_box.bottom, value_box.bottom) - max(
+                label_box.top,
+                value_box.top,
+            )
+            if vertical_overlap > 0:
+                rejected.add(label.layout_line_number)
+                break
+    return rejected
+
+
+def _looks_like_data_value(value: str) -> bool:
+    normalized = normalize_source_text(value).text
+    return bool(
+        _CURRENCY_VALUE.fullmatch(normalized)
+        or _REFERENCE_CODE_VALUE.fullmatch(normalized)
+    )
+
+
+def _legacy_heading_range(line_text: str, hint_text: str) -> tuple[int, int] | None:
+    normalized_hint = normalize_source_text(hint_text).text
+    if not normalized_hint:
+        return None
+    if line_text == normalized_hint:
+        return 0, len(line_text)
+    position = line_text.find(normalized_hint)
+    if position < 0:
+        return None
+    prefix = line_text[:position]
+    suffix = line_text[position + len(normalized_hint) :]
+    if not _OUTLINE_PREFIX.fullmatch(prefix.strip()):
+        return None
+    if suffix and not suffix[0].isspace():
+        return None
+    return 0, position + len(normalized_hint)
+
+
+def _heading_label(value: str) -> str:
+    normalized = normalize_source_text(value).text
+    return _HEADING_LABEL_PREFIX.sub("", normalized, count=1).strip()
+
+
+def _heading_source_reference(
+    block: ArtifactTextBlock,
+    normalized: NormalizedSourceText,
+    heading: _HeadingMatch,
+    *,
+    fallback_bounding_box: ArtifactBoundingBox | None,
+) -> _HeadingSourceReference:
+    source_start, source_end = normalized.source_range(heading.start, heading.end)
+    boxes: list[ArtifactBoundingBox] = []
+    for layout_line in block.pdf_layout_lines:
+        if (
+            layout_line.character_start is None
+            or layout_line.character_end is None
+            or layout_line.character_end <= source_start
+            or layout_line.character_start >= source_end
+        ):
+            continue
+        if layout_line.bounding_box not in boxes:
+            boxes.append(layout_line.bounding_box)
+    if not boxes and fallback_bounding_box is not None:
+        boxes.append(fallback_bounding_box)
+    if not boxes and block.bounding_box is not None:
+        boxes.append(block.bounding_box)
+    return _HeadingSourceReference(
+        heading_text=heading.text,
+        source_text=block.text[source_start:source_end],
+        source_span=ChunkSourceSpan(
+            block_id=block.block_id,
+            start_locator=block.locator,
+            end_locator=block.locator,
+            character_start=source_start,
+            character_end=source_end,
+            bounding_boxes=boxes,
+        ),
+    )
+
+
+def _excluded_span_from_range(
+    block: ArtifactTextBlock,
+    normalized: NormalizedSourceText,
+    start: int,
+    end: int,
+    *,
+    reason: Literal[
+        "repeated_header",
+        "repeated_footer",
+        "heading_metadata",
+        "noise",
+    ],
+    bounding_box: ArtifactBoundingBox | None,
+) -> ExcludedChunkSpan:
+    source_start, source_end = normalized.source_range(start, end)
+    return ExcludedChunkSpan(
+        block_id=block.block_id,
+        reason=reason,
+        text=block.text[source_start:source_end],
+        locator=block.locator,
+        bounding_box=bounding_box,
+        character_start=source_start,
+        character_end=source_end,
+    )
+
+
+def _updated_heading_stack(
+    headings: dict[int, _HeadingSourceReference],
+    *,
+    level: int,
+    source: _HeadingSourceReference,
+) -> dict[int, _HeadingSourceReference]:
+    updated = {
+        existing_level: value
+        for existing_level, value in headings.items()
+        if existing_level < level
+    }
+    updated[level] = source
+    return updated
+
+
+def _parallel_heading_lanes(block: ArtifactTextBlock) -> dict[int, int]:
+    located = [
+        hint
+        for hint in block.heading_hints
+        if hint.layout_line_number is not None
+        and hint.bounding_box is not None
+        and not _BULLET_HEADING_MARKER.match(hint.text)
+    ]
+    lanes: dict[int, int] = {}
+    for index, first in enumerate(located):
+        first_box = first.bounding_box
+        if first_box is None or first.layout_line_number is None:
+            continue
+        for second in located[index + 1 :]:
+            second_box = second.bounding_box
+            if (
+                second_box is None
+                or second.layout_line_number is None
+                or first.level != second.level
+                or first_box.page_number != second_box.page_number
+            ):
+                continue
+            tolerance = max(
+                first_box.bottom - first_box.top,
+                second_box.bottom - second_box.top,
+            )
+            if abs(first_box.top - second_box.top) > tolerance:
+                continue
+            page_middle = first_box.page_width / 2
+            first_center = (first_box.left + first_box.right) / 2
+            second_center = (second_box.left + second_box.right) / 2
+            if (first_center < page_middle) == (second_center < page_middle):
+                continue
+            lanes[first.layout_line_number] = int(first_center >= page_middle)
+            lanes[second.layout_line_number] = int(second_center >= page_middle)
+    return lanes
+
+
+def _pdf_heading_context(
+    block: ArtifactTextBlock,
+    headings: dict[int, _HeadingSourceReference],
+    lane_headings: dict[int, dict[int, _HeadingSourceReference]],
+    line: _LineSlice,
+    *,
+    preferred_lane: int | None = None,
+) -> tuple[tuple[str, ...], tuple[ChunkHeadingSource, ...]]:
+    lane = preferred_lane
+    if lane is None and line.bounding_box is not None and lane_headings:
+        middle = line.bounding_box.page_width / 2
+        center = (line.bounding_box.left + line.bounding_box.right) / 2
+        lane = int(center >= middle)
+    selected = lane_headings.get(lane) if lane is not None else None
+    active = selected or headings
+    ordered_sources = [active[level] for level in sorted(active)]
+    path = (
+        tuple(block.heading_path)
+        if block.heading_path
+        else tuple(source.heading_text for source in ordered_sources)
+    )
+    materialized: list[ChunkHeadingSource] = []
+    search_start = 0
+    for path_index, part in enumerate(path):
+        matched_index = next(
+            (
+                index
+                for index in range(search_start, len(ordered_sources))
+                if _comparable_text(ordered_sources[index].heading_text)
+                == _comparable_text(part)
+            ),
+            None,
+        )
+        if matched_index is None:
+            continue
+        source = ordered_sources[matched_index]
+        materialized.append(
+            ChunkHeadingSource(
+                heading_path_index=path_index,
+                heading_text=part,
+                source_text=source.source_text,
+                source_span=source.source_span,
+            )
+        )
+        search_start = matched_index + 1
+    return path, tuple(materialized)
+
+
+def _slice_exclusion_reason(
+    line: _LineSlice,
+    repeated_lines: dict[
+        _ExcludedLineKey,
+        Literal["repeated_header", "repeated_footer"],
+    ],
+) -> Literal["repeated_header", "repeated_footer"] | None:
+    direct = repeated_lines.get(_line_key(line))
+    if direct is not None:
+        return direct
+    for key, reason in repeated_lines.items():
+        if (
+            key.block_id == line.block.block_id
+            and key.start <= line.start
+            and line.end <= key.end
+        ):
+            return reason
+    return None
 
 
 def _line_key(line: _LineSlice) -> _ExcludedLineKey:

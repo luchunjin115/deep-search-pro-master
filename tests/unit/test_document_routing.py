@@ -2,20 +2,24 @@ from __future__ import annotations
 
 from typing import Any
 
+import pymupdf
 import pytest
 
 from app.core.config import Settings
 from app.services.documents.artifacts import (
     ArtifactBoundingBox,
+    ArtifactPageProperties,
     ArtifactTableBlock,
     ArtifactTextBlock,
     artifact_to_markdown,
+    build_canonical_artifact,
 )
 from app.services.documents.parsers import (
     DocumentEncryptedError,
     DocumentEnhancementError,
     DocumentLimitError,
     DocumentParseError,
+    DocumentQualityRejected,
 )
 from app.services.documents.parsers.docling import (
     DoclingParseSnapshot,
@@ -24,7 +28,12 @@ from app.services.documents.parsers.docling import (
     DoclingTextSnapshot,
     adapt_docling_snapshot,
 )
-from app.services.documents.routing import DocumentParserRouter
+from app.services.documents.quality import (
+    POST_PARSE_QUALITY_POLICY_VERSION,
+    ParseQualityDecision,
+    decide_parse_route,
+)
+from app.services.documents.routing import DocumentParserRouter, RoutedParseResult
 from scripts.seed_m2_complex_files import (
     generate_complex_sources,
     load_complex_seed_definition,
@@ -34,11 +43,21 @@ from tests.fixtures.docx_factory import (
     make_docx_with_archive_payload,
     make_structured_docx,
 )
-from tests.fixtures.pdf_factory import make_encrypted_pdf
+from tests.fixtures.pdf_factory import (
+    make_encrypted_pdf,
+    make_low_text_pdf,
+    make_scanned_image_pdf,
+    make_text_pdf,
+)
 
 
 def _settings(**overrides: Any) -> Settings:
-    return Settings(_env_file=None, **overrides)  # type: ignore[call-arg]
+    values = {
+        "docx_image_ocr_backend": "disabled",
+        "docx_empty_ocr_min_image_bytes": 10 * 1024 * 1024,
+        **overrides,
+    }
+    return Settings(_env_file=None, **values)  # type: ignore[call-arg]
 
 
 class FakeDoclingProvider:
@@ -53,22 +72,87 @@ class FakeDoclingProvider:
         source_type: str,
         content: bytes,
     ) -> DoclingParseSnapshot:
-        del content
         self.calls.append((source_name, source_type))
         if self.error is not None:
             raise self.error
+        page_count = None
+        page_numbers: list[int | None] = [None]
+        if source_type == "pdf":
+            with pymupdf.open(stream=content, filetype="pdf") as document:  # type: ignore[no-untyped-call]
+                page_count = document.page_count
+            page_numbers = list(range(1, page_count + 1))
         return DoclingParseSnapshot(
             source_type=source_type,  # type: ignore[arg-type]
             parser_version="m2-docling-v1+docling-fake",
-            page_count=(2 if source_type == "pdf" else None),
+            page_count=page_count,
             items=[
                 DoclingTextSnapshot(
-                    text="Docling synthetic extracted fact",
+                    text=f"Docling synthetic extracted fact page {page_number or 1}",
                     label="text",
-                    page_number=(1 if source_type == "pdf" else None),
+                    page_number=page_number,
                 )
+                for page_number in page_numbers
             ],
         )
+
+
+class TruncatedPageDoclingProvider:
+    def parse(
+        self,
+        *,
+        source_name: str,
+        source_type: str,
+        content: bytes,
+    ) -> DoclingParseSnapshot:
+        del source_name, content
+        return DoclingParseSnapshot(
+            source_type=source_type,  # type: ignore[arg-type]
+            parser_version="m2-docling-v1+truncated-fake",
+            page_count=2,
+            items=[
+                DoclingTextSnapshot(
+                    text="x" * 300,
+                    label="text",
+                    page_number=1,
+                ),
+                DoclingTextSnapshot(
+                    text="lostpage",
+                    label="text",
+                    page_number=2,
+                ),
+            ],
+        )
+
+
+def test_router_attaches_an_accepted_post_parse_quality_decision() -> None:
+    result = DocumentParserRouter(_settings()).parse(
+        source_name="healthy.pdf",
+        content=make_text_pdf(include_empty_page=False),
+    )
+
+    assert result.post_parse_quality is not None
+    assert result.post_parse_quality.status == "accepted"
+    assert result.post_parse_quality.policy_version == POST_PARSE_QUALITY_POLICY_VERSION
+
+    legacy_payload = result.model_dump(mode="json")
+    legacy_payload.pop("post_parse_quality")
+    assert RoutedParseResult.model_validate(legacy_payload).post_parse_quality is None
+
+
+def test_router_rejects_a_docling_result_with_one_truncated_page() -> None:
+    router = DocumentParserRouter(
+        _settings(native_text_min_characters=500),
+        docling_provider=TruncatedPageDoclingProvider(),
+    )
+
+    with pytest.raises(DocumentQualityRejected) as error:
+        router.parse(
+            source_name="truncated.pdf",
+            content=make_text_pdf(include_empty_page=False),
+        )
+
+    assert error.value.decision.status == "rejected"
+    assert "pdf_page_text_regression" in error.value.decision.rejection_codes
 
 
 def test_docling_snapshot_adapter_preserves_order_bbox_and_merged_cells() -> None:
@@ -169,7 +253,7 @@ def test_ordinary_m2_corpus_stays_native_without_calling_docling() -> None:
     assert provider.calls == []
 
 
-def test_complex_corpus_enters_docling_and_office_keeps_native_facts() -> None:
+def test_complex_corpus_routes_only_unreadable_pdf_and_office() -> None:
     provider = FakeDoclingProvider()
     router = DocumentParserRouter(_settings(), docling_provider=provider)
     results = {}
@@ -180,15 +264,26 @@ def test_complex_corpus_enters_docling_and_office_keeps_native_facts() -> None:
             content=source.content,
         )
 
-    assert len(provider.calls) == 5
+    assert len(provider.calls) == 2
     assert [result.route for result in results.values()] == [
         "docling",
-        "docling",
-        "docling",
-        "hybrid",
+        "native",
+        "native",
+        "native",
         "hybrid",
     ]
-    assert all(result.docling_artifact is not None for result in results.values())
+    assert results["scanned_receiving_ticket"].quality.native_text_health is not None
+    assert (
+        results["scanned_receiving_ticket"].quality.native_text_health.status
+        == "unusable"
+    )
+    assert results["two_column_market_brief"].quality.native_text_health is not None
+    assert (
+        results["two_column_market_brief"].quality.native_text_health.status
+        == "healthy"
+    )
+    assert results["two_column_market_brief"].docling_artifact is None
+    assert results["merged_header_cost_table"].docling_artifact is None
     assert (
         "detected_two_column"
         in results["two_column_market_brief"].quality.complexity_tags
@@ -213,8 +308,129 @@ def test_complex_corpus_enters_docling_and_office_keeps_native_facts() -> None:
     assert workbook.comparison.native_formula_count == 6
     notice = results["visual_quality_notice"]
     assert notice.selected_artifact.parser.provider == "native"
-    assert notice.docling_artifact is not None
-    assert notice.docling_artifact.parser.provider == "docling"
+    assert notice.docling_artifact is None
+    assert "complexity_detected_embedded_media_native_visual_extraction" in (
+        notice.reasons
+    )
+
+
+def test_healthy_pdf_keeps_native_despite_structure_tags_and_true_blank_page() -> None:
+    provider = FakeDoclingProvider()
+    result = DocumentParserRouter(
+        _settings(),
+        docling_provider=provider,
+    ).parse(
+        source_name="healthy-structured.pdf",
+        content=make_text_pdf(include_empty_page=True),
+        complexity_tags=("detected_document_table", "detected_two_column"),
+    )
+
+    assert result.route == "native"
+    assert result.selected_artifact == result.native_artifact
+    assert result.docling_artifact is None
+    assert provider.calls == []
+    assert result.quality.native_text_health is not None
+    assert result.quality.native_text_health.status == "healthy"
+    assert result.quality.native_text_health.content_page_count == 2
+    assert result.quality.native_text_health.healthy_page_count == 2
+    assert result.quality.native_text_health.healthy_page_ratio == 1.0
+    assert (
+        result.quality.native_text_health.policy_version == "m2-native-text-health-v1"
+    )
+    assert "complexity_detected_document_table_advisory" in result.reasons
+    assert "complexity_detected_two_column_advisory" in result.reasons
+
+
+@pytest.mark.parametrize(
+    ("source_name", "content", "expected_status"),
+    [
+        ("low-text.pdf", make_low_text_pdf(), "suspect"),
+        ("scanned.pdf", make_scanned_image_pdf(), "unusable"),
+    ],
+)
+def test_low_text_and_scanned_pdf_still_enter_docling(
+    source_name: str,
+    content: bytes,
+    expected_status: str,
+) -> None:
+    provider = FakeDoclingProvider()
+    result = DocumentParserRouter(
+        _settings(),
+        docling_provider=provider,
+    ).parse(source_name=source_name, content=content)
+
+    assert result.route == "docling"
+    assert result.selected_artifact.parser.provider == "docling"
+    assert provider.calls == [(source_name, "pdf")]
+    assert result.quality.native_text_health is not None
+    assert result.quality.native_text_health.status == expected_status
+
+
+def test_invalid_native_character_ratio_is_auditable_and_unusable() -> None:
+    unreadable = "\ufffd" * 40
+    artifact = build_canonical_artifact(
+        source_type="pdf",
+        source_sha256="a" * 64,
+        parser_name="synthetic-native",
+        parser_version="1.0",
+        blocks=[
+            ArtifactTextBlock(
+                block_id="b000001",
+                text=unreadable,
+                locator={"page_number": 1},
+                page=ArtifactPageProperties(
+                    page_number=1,
+                    character_count=len(unreadable),
+                    image_count=0,
+                    low_text=False,
+                ),
+            )
+        ],
+        warnings=[],
+        source_character_count=len(unreadable),
+        page_count=1,
+    )
+
+    decision = decide_parse_route(artifact)
+
+    assert decision.route == "docling"
+    assert decision.native_text_health is not None
+    assert decision.native_text_health.status == "unusable"
+    assert decision.native_text_health.valid_character_count == 0
+    assert decision.native_text_health.valid_character_ratio == 0.0
+    assert "native_text_no_valid_characters" in decision.native_text_health.reasons
+
+
+def test_settings_thresholds_control_routing_and_are_recorded() -> None:
+    provider = FakeDoclingProvider()
+    result = DocumentParserRouter(
+        _settings(native_text_min_characters=500),
+        docling_provider=provider,
+    ).parse(
+        source_name="short-for-policy.pdf",
+        content=make_text_pdf(include_empty_page=False),
+    )
+
+    assert result.route == "docling"
+    assert result.quality.native_text_health is not None
+    assert result.quality.native_text_health.status == "suspect"
+    assert result.quality.native_text_health.minimum_character_count == 500
+    assert (
+        "native_text_character_count_low" in result.quality.native_text_health.reasons
+    )
+
+
+def test_legacy_quality_payload_without_health_assessment_remains_readable() -> None:
+    result = DocumentParserRouter(_settings()).parse(
+        source_name="legacy.pdf",
+        content=make_text_pdf(include_empty_page=False),
+    )
+    payload = result.quality.model_dump(mode="json")
+    payload.pop("native_text_health")
+
+    restored = ParseQualityDecision.model_validate(payload)
+
+    assert restored.native_text_health is None
 
 
 def test_native_security_failures_happen_before_docling() -> None:

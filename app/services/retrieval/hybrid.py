@@ -89,19 +89,21 @@ def _fuse_responses(
         raise ValueError("Lexical route returned an invalid response mode")
 
     merged: dict[UUID, _MergedCandidate] = {}
-    for expected_rank, result in enumerate(dense_response.results, start=1):
+    for result in dense_response.results:
         dense_score = result.scores.dense
-        if dense_score is None or dense_score.rank != expected_rank:
-            raise ValueError("Dense route ranks are not contiguous")
+        if dense_score is None or dense_score.rank != result.final_rank:
+            raise ValueError("Dense route score rank does not match its original rank")
         candidate = _merge_candidate(merged, result)
         if candidate.dense is not None:
             raise ValueError("Dense route returned a duplicate Chunk")
         candidate.dense = dense_score
 
-    for expected_rank, result in enumerate(lexical_response.results, start=1):
+    for result in lexical_response.results:
         lexical_score = result.scores.lexical
-        if lexical_score is None or lexical_score.rank != expected_rank:
-            raise ValueError("Lexical route ranks are not contiguous")
+        if lexical_score is None or lexical_score.rank != result.final_rank:
+            raise ValueError(
+                "Lexical route score rank does not match its original rank"
+            )
         candidate = _merge_candidate(merged, result)
         if candidate.lexical is not None:
             raise ValueError("Lexical route returned a duplicate Chunk")
@@ -125,6 +127,10 @@ def _fuse_responses(
         fts_identity=lexical_response.fts_identity,
         rrf_k=rrf_k,
         results=results,
+        candidate_failures=[
+            *dense_response.candidate_failures,
+            *lexical_response.candidate_failures,
+        ],
     )
 
 

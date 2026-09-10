@@ -1,0 +1,53 @@
+{
+  "schema_version": "m2-parser-evaluation-report-v1",
+  "run_id": "m2-parser-planned",
+  "run_status": "planned",
+  "started_at": null,
+  "completed_at": null,
+  "source_manifest_version": "m2-cross-border-sources-v1",
+  "source_manifest_sha256": "f0b6c492603a91a9b9eb220ec96a060150b1396a79274f0e5357cacd6680b6c7",
+  "dataset_version": "m2-cross-border-rag-smoke-v1",
+  "dataset_sha256": "1d22afa22c5752463189827dba86502f8bc1d06ab7d70403cb0af463c5c4c46b",
+  "fixture_registry_version": "m2-eval-fixtures-v1",
+  "documents": [],
+  "malformed_upload_probe": {
+    "status": "planned",
+    "failure_category": null,
+    "failure_summary": null
+  },
+  "aggregate": {
+    "documents_total": 0,
+    "uploads_accepted": 0,
+    "parses_completed": 0,
+    "parses_failed": 0,
+    "routes": {
+      "native": 0,
+      "docling": 0,
+      "hybrid": 0
+    },
+    "cases_total": 0,
+    "cases_recovered": 0,
+    "parser_fact_recovery_rate": null,
+    "ocr_cases_total": 0,
+    "ocr_cases_recovered": 0,
+    "ocr_field_accuracy": null,
+    "recovery_by_group": [],
+    "parse_latency_p50_ms": null,
+    "parse_latency_p95_ms": null,
+    "parse_latency_max_ms": null,
+    "peak_rss_max_bytes": null
+  },
+  "cleanup": {
+    "cleanup_attempted": false,
+    "evaluation_database_rows_remaining": 0,
+    "evaluation_storage_objects_remaining": 0,
+    "formal_files": 0,
+    "formal_documents": 0,
+    "formal_versions": 0,
+    "formal_acl": 0,
+    "formal_pending_versions": 0,
+    "formal_upload_objects": 0,
+    "m1_guard_available": null,
+    "baseline_restored": false
+  }
+}

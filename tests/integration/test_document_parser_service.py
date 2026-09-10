@@ -33,6 +33,10 @@ from app.schemas.knowledge import (
     DocumentVersionCreateInput,
 )
 from app.services.documents import DocumentParserService, DocumentService
+from app.services.documents.parsers.docling import (
+    DoclingParseSnapshot,
+    DoclingTextSnapshot,
+)
 from app.services.documents.routing import RoutedParseResult
 from app.services.files import FileService
 from app.services.storage import LocalStorageBackend
@@ -211,6 +215,8 @@ def test_parse_version_publishes_auditable_json_and_ready_state(
         payload = stream.read()
     published = RoutedParseResult.model_validate_json(payload)
     assert published.schema_version == "m2-routed-parsed-document-v1"
+    assert published.post_parse_quality is not None
+    assert published.post_parse_quality.status == "accepted"
     assert (
         published.selected_artifact.source_sha256
         == hashlib.sha256(fixture.source).hexdigest()
@@ -229,6 +235,66 @@ def test_parse_version_publishes_auditable_json_and_ready_state(
             version_id=fixture.version_id,
         )
     assert fixture.storage.exists(fixture.parsed_key)
+
+
+class _TruncatedPageProvider:
+    def parse(
+        self,
+        *,
+        source_name: str,
+        source_type: str,
+        content: bytes,
+    ) -> DoclingParseSnapshot:
+        del source_name, content
+        return DoclingParseSnapshot(
+            source_type=source_type,  # type: ignore[arg-type]
+            parser_version="m2-docling-v1+truncated-integration-fake",
+            page_count=2,
+            items=[
+                DoclingTextSnapshot(
+                    text="x" * 300,
+                    label="text",
+                    page_number=1,
+                ),
+                DoclingTextSnapshot(
+                    text="lostpage",
+                    label="text",
+                    page_number=2,
+                ),
+            ],
+        )
+
+
+def test_quality_rejection_marks_parse_failed_and_publishes_nothing(
+    parser_fixture: ParserFixture,
+) -> None:
+    fixture = parser_fixture
+    settings = fixture.settings.model_copy(update={"native_text_min_characters": 500})
+    parser = DocumentParserService(
+        fixture.runtime.session_factory,
+        fixture.storage,
+        settings,
+        docling_provider=_TruncatedPageProvider(),
+        clock=lambda: datetime(2026, 8, 30, tzinfo=UTC),
+    )
+
+    with pytest.raises(DocumentParsingError):
+        parser.parse_version(
+            fixture.user,
+            document_id=fixture.document_id,
+            version_id=fixture.version_id,
+        )
+
+    _document, version, file_row = _database_rows(
+        fixture.runtime.session_factory,
+        fixture,
+    )
+    assert version.parse_status == "failed"
+    assert version.index_status == "pending"
+    assert version.parsed_storage_key is None
+    assert version.parser_name is None
+    assert file_row.status == "failed"
+    assert not fixture.storage.exists(fixture.parsed_key)
 
 
 def test_source_failure_marks_failed_and_same_version_can_retry(

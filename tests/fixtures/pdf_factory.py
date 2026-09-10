@@ -46,6 +46,24 @@ def make_text_pdf(*, include_empty_page: bool = True) -> bytes:
     return output.getvalue()
 
 
+def make_two_column_text_pdf() -> bytes:
+    """Create one page whose same-height left/right lines stay physically distinct."""
+
+    output = io.BytesIO()
+    canvas = Canvas(output, pagesize=A4, pageCompression=1)
+    _width, height = A4
+    canvas.setFont("Helvetica-Bold", 20)
+    canvas.drawString(54, height - 70, "Two Column Brief")
+    canvas.setFont("Helvetica-Bold", 14)
+    canvas.drawString(54, height - 120, "Left Sales")
+    canvas.drawString(320, height - 120, "Right Actions")
+    canvas.setFont("Helvetica", 11)
+    canvas.drawString(54, height - 155, "Units sold: 139")
+    canvas.drawString(320, height - 155, "Daily budget: 18 EUR")
+    canvas.save()
+    return output.getvalue()
+
+
 def make_scanned_image_pdf() -> bytes:
     """Create one image-only PDF page with no embedded text layer."""
 

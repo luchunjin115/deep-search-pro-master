@@ -7,7 +7,9 @@ from collections.abc import Sequence
 import pytest
 
 from app.services.documents.artifacts import (
+    ArtifactBoundingBox,
     ArtifactHeadingHint,
+    ArtifactPdfLayoutLine,
     ArtifactTableBlock,
     ArtifactTextBlock,
     build_canonical_artifact,
@@ -23,7 +25,7 @@ from app.services.documents.parsers.docx import DocxParser
 from app.services.documents.parsers.native import adapt_native_parse_result
 from app.services.documents.parsers.pdf import PdfParser
 from tests.fixtures.docx_factory import make_structured_docx
-from tests.fixtures.pdf_factory import make_text_pdf
+from tests.fixtures.pdf_factory import make_text_pdf, make_two_column_text_pdf
 
 _SOURCE_HASH = "1" * 64
 
@@ -183,6 +185,243 @@ def test_pdf_exact_heading_hint_creates_path_and_cross_page_chunk() -> None:
     assert result.chunks[0].heading_path == ["安全规范"]
     assert result.chunks[0].page_numbers == [1, 2]
     assert "安全规范" in result.chunks[0].retrieval_text
+    assert "安全规范" not in result.chunks[0].body_text
+    heading_source = result.chunks[0].heading_sources[0]
+    heading_exclusion = next(
+        span for span in result.excluded_spans if span.reason == "heading_metadata"
+    )
+    assert heading_source.heading_path_index == 0
+    assert heading_source.heading_text == "安全规范"
+    assert heading_source.source_text == "安全规范"
+    assert heading_source.source_span.block_id == "b000001"
+    assert heading_source.source_span.character_start == 0
+    assert heading_source.source_span.character_end == len("安全规范")
+    assert heading_exclusion.block_id == "b000001"
+    assert heading_exclusion.character_start == 0
+    assert heading_exclusion.character_end == len("安全规范")
+
+
+def test_pdf_numbered_heading_becomes_metadata_not_chunk_body() -> None:
+    heading = ArtifactHeadingHint(
+        text="IOSS适用范围",
+        level=1,
+        locator=SourceLocator(page_number=1),
+    )
+    artifact = _artifact(
+        "pdf",
+        [
+            _pdf_text(
+                1,
+                1,
+                "2. IOSS适用范围\n该特殊安排适用于不超过150欧元的进口货物。",
+                heading_hints=[heading],
+            )
+        ],
+        page_count=1,
+    )
+
+    result = StructureAwareTextChunker().chunk(artifact)
+
+    assert len(result.chunks) == 1
+    assert result.chunks[0].heading_path == ["IOSS适用范围"]
+    assert result.chunks[0].body_text == "该特殊安排适用于不超过150欧元的进口货物。"
+    assert result.chunks[0].retrieval_text == (
+        "IOSS适用范围\n\n该特殊安排适用于不超过150欧元的进口货物。"
+    )
+
+
+def test_pdf_heading_metadata_keeps_parent_child_path_without_title_only_chunk() -> (
+    None
+):
+    artifact = _artifact(
+        "pdf",
+        [
+            _pdf_text(
+                1,
+                1,
+                "VAT\n2. IOSS适用范围\n申报人必须保存相关交易记录。",
+                heading_hints=[
+                    ArtifactHeadingHint(
+                        text="VAT",
+                        level=1,
+                        locator=SourceLocator(page_number=1),
+                    ),
+                    ArtifactHeadingHint(
+                        text="IOSS适用范围",
+                        level=2,
+                        locator=SourceLocator(page_number=1),
+                    ),
+                ],
+            )
+        ],
+        page_count=1,
+    )
+
+    result = StructureAwareTextChunker().chunk(artifact)
+
+    assert len(result.chunks) == 1
+    assert result.chunks[0].heading_path == ["VAT", "IOSS适用范围"]
+    assert result.chunks[0].body_text == "申报人必须保存相关交易记录。"
+    assert result.chunks[0].retrieval_text == (
+        "VAT > IOSS适用范围\n\n申报人必须保存相关交易记录。"
+    )
+
+
+def test_pdf_masthead_consumed_by_main_title_keeps_exact_noise_audit() -> None:
+    source = (
+        "CONSUMER PROTECTION\n"
+        "THE NEW GENERAL PRODUCT\n"
+        "SAFETY REGULATION\n"
+        "The regulation protects consumers."
+    )
+    line_texts = [
+        "CONSUMER PROTECTION",
+        "THE NEW GENERAL PRODUCT",
+        "SAFETY REGULATION",
+        "The regulation protects consumers.",
+    ]
+    starts = [source.index(text) for text in line_texts]
+    boxes = [
+        ArtifactBoundingBox(
+            page_number=1,
+            left=40,
+            top=10 + index * 10,
+            right=300,
+            bottom=20 + index * 10,
+            page_width=600,
+            page_height=800,
+        )
+        for index in range(4)
+    ]
+    block = ArtifactTextBlock(
+        block_id="b000001",
+        text=source,
+        locator=SourceLocator(page_number=1),
+        pdf_layout_lines=[
+            ArtifactPdfLayoutLine(
+                line_number=index + 1,
+                text=text,
+                character_start=starts[index],
+                character_end=starts[index] + len(text),
+                locator=SourceLocator(page_number=1),
+                bounding_box=boxes[index],
+            )
+            for index, text in enumerate(line_texts)
+        ],
+        heading_hints=[
+            ArtifactHeadingHint(
+                text=text,
+                level=1 if index == 0 else 3,
+                locator=SourceLocator(page_number=1),
+                layout_line_number=index + 1,
+                bounding_box=boxes[index],
+            )
+            for index, text in enumerate(line_texts[:3])
+        ],
+    )
+    artifact = _artifact("pdf", [block], page_count=1)
+
+    result = StructureAwareTextChunker().chunk(artifact)
+
+    assert result.chunks[0].heading_path == [
+        "THE NEW GENERAL PRODUCT SAFETY REGULATION"
+    ]
+    assert result.chunks[0].body_text == "The regulation protects consumers."
+    masthead = next(span for span in result.excluded_spans if span.reason == "noise")
+    assert masthead.text == "CONSUMER PROTECTION"
+    assert masthead.character_start == 0
+    assert masthead.character_end == len("CONSUMER PROTECTION")
+
+
+def test_pdf_heading_hint_inside_prose_is_not_promoted_to_metadata() -> None:
+    artifact = _artifact(
+        "pdf",
+        [
+            _pdf_text(
+                1,
+                1,
+                "本文讨论IOSS适用范围的变化。",
+                heading_hints=[
+                    ArtifactHeadingHint(
+                        text="IOSS适用范围",
+                        level=1,
+                        locator=SourceLocator(page_number=1),
+                    )
+                ],
+            )
+        ],
+        page_count=1,
+    )
+
+    result = StructureAwareTextChunker().chunk(artifact)
+
+    assert len(result.chunks) == 1
+    assert result.chunks[0].heading_path == []
+    assert result.chunks[0].body_text == "本文讨论IOSS适用范围的变化。"
+
+
+def test_pdf_inline_numbered_heading_keeps_body_and_exact_source_range() -> None:
+    source = "2. IOSS适用范围 该特殊安排适用于不超过150欧元的进口货物。"
+    artifact = _artifact(
+        "pdf",
+        [
+            _pdf_text(
+                1,
+                1,
+                source,
+                heading_hints=[
+                    ArtifactHeadingHint(
+                        text="IOSS适用范围",
+                        level=1,
+                        locator=SourceLocator(page_number=1),
+                    )
+                ],
+            )
+        ],
+        page_count=1,
+    )
+
+    result = StructureAwareTextChunker().chunk(artifact)
+
+    assert len(result.chunks) == 1
+    chunk = result.chunks[0]
+    assert chunk.heading_path == ["IOSS适用范围"]
+    assert chunk.body_text == "该特殊安排适用于不超过150欧元的进口货物。"
+    assert chunk.source_spans[0].character_start == source.index("该")
+    assert chunk.source_spans[0].character_end == len(source)
+    assert len(chunk.heading_sources) == 1
+    assert chunk.heading_sources[0].heading_text == "IOSS适用范围"
+    assert chunk.heading_sources[0].source_text == "2. IOSS适用范围"
+    assert chunk.heading_sources[0].source_span.character_start == 0
+    assert chunk.heading_sources[0].source_span.character_end == source.index(" 该")
+
+
+def test_pdf_two_column_body_uses_heading_from_its_own_physical_column() -> None:
+    source = make_two_column_text_pdf()
+    parsed = PdfParser().parse(io.BytesIO(source))
+    artifact = adapt_native_parse_result(
+        parsed,
+        source_sha256=hashlib.sha256(source).hexdigest(),
+    )
+
+    first = StructureAwareTextChunker().chunk(artifact)
+    second = StructureAwareTextChunker().chunk(artifact)
+
+    by_body = {chunk.body_text: chunk for chunk in first.chunks}
+    assert by_body["Units sold: 139"].heading_path == [
+        "Two Column Brief",
+        "Left Sales",
+    ]
+    assert by_body["Daily budget: 18 EUR"].heading_path == [
+        "Two Column Brief",
+        "Right Actions",
+    ]
+    assert all(
+        heading not in chunk.body_text
+        for chunk in first.chunks
+        for heading in ("Two Column Brief", "Left Sales", "Right Actions")
+    )
+    assert first == second
 
 
 def test_long_paragraph_uses_hard_limit_and_auditable_same_section_overlap() -> None:

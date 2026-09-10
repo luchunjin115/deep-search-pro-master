@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from typing import BinaryIO, Generic, Literal, Protocol, TypeVar
+from typing import TYPE_CHECKING, BinaryIO, Generic, Literal, Protocol, TypeVar
 
 from pydantic import Field, model_validator
 
 from app.schemas.common import M1Schema
+
+if TYPE_CHECKING:
+    from app.services.documents.quality import PostParseQualityDecision
 
 ParserWarningCode = Literal[
     "empty_page",
@@ -90,6 +93,14 @@ class DocumentEnhancementError(DocumentParseError):
 
     def __init__(self) -> None:
         super().__init__("复杂文档增强解析失败")
+
+
+class DocumentQualityRejected(DocumentParseError):
+    """A deterministic post-parse gate rejected a candidate artifact."""
+
+    def __init__(self, decision: PostParseQualityDecision) -> None:
+        self.decision = decision
+        super().__init__("文档解析结果未通过质量检查")
 
 
 ParseResultT_co = TypeVar("ParseResultT_co", covariant=True)

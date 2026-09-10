@@ -18,6 +18,7 @@ from app.services.documents.chunking import (
     build_document_chunk,
 )
 from app.services.documents.chunking.contracts import (
+    ChunkHeadingSource,
     ChunkOverlap,
     ChunkSourceSpan,
     ChunkTableData,
@@ -52,6 +53,60 @@ def _identity() -> ChunkerIdentity:
         token_counter_name=counter.name,
         token_counter_version=counter.version,
     )
+
+
+def test_chunker_identity_defaults_to_audited_heading_v3_and_reads_history() -> None:
+    counter = _counter()
+
+    current = _identity()
+    historical = ChunkerIdentity(
+        version="m2-structure-aware-chunker-v1",
+        token_counter_name=counter.name,
+        token_counter_version=counter.version,
+    )
+    heading_metadata_v2 = historical.model_copy(
+        update={"version": "m2-structure-aware-chunker-v2"}
+    )
+
+    assert current.version == "m2-structure-aware-chunker-v3"
+    assert historical.version == "m2-structure-aware-chunker-v1"
+    assert ChunkerIdentity.model_validate(heading_metadata_v2).version == (
+        "m2-structure-aware-chunker-v2"
+    )
+
+
+def test_heading_source_is_bound_to_path_and_chunk_hash() -> None:
+    locator = SourceLocator(page_number=1)
+    heading_span = ChunkSourceSpan(
+        block_id="b000002",
+        start_locator=locator,
+        end_locator=locator,
+        character_start=0,
+        character_end=4,
+    )
+    source = ChunkHeadingSource(
+        heading_path_index=0,
+        heading_text="安全要求",
+        source_text="安全要求",
+        source_span=heading_span,
+    )
+    original = _text_chunk()
+    chunk = {
+        field_name: getattr(original, field_name)
+        for field_name in type(original).model_fields
+        if field_name != "content_sha256"
+    }
+    chunk["heading_sources"] = [source]
+    bound = build_document_chunk(**chunk)
+
+    assert bound.heading_sources == [source]
+    assert bound.content_sha256 != _text_chunk().content_sha256
+
+    wrong_path = chunk | {
+        "heading_sources": [source.model_copy(update={"heading_text": "伪造标题"})]
+    }
+    with pytest.raises(ValidationError, match="match their heading path"):
+        build_document_chunk(**wrong_path)
 
 
 def _text_chunk(

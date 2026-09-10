@@ -1,0 +1,27 @@
+{
+  "schema_version": "m2-parser-diagnostic-report-v1",
+  "run_id": "m2-22.4-diagnostic-planned",
+  "run_status": "planned",
+  "started_at": null,
+  "completed_at": null,
+  "base_report_run_id": null,
+  "base_report_sha256": null,
+  "documents": [],
+  "aggregate": {
+    "documents_total": 0,
+    "documents_completed": 0,
+    "documents_failed": 0,
+    "cases_diagnosed": 0,
+    "category_counts": {
+      "recovered_on_rerun": 0,
+      "evaluation_normalization_gap": 0,
+      "route_selection_loss": 0,
+      "provider_partial_result": 0,
+      "enhanced_provider_execution_failure": 0,
+      "reading_order_or_format_loss": 0,
+      "ocr_extraction_loss": 0,
+      "partial_extraction_loss": 0,
+      "complete_extraction_loss": 0
+    }
+  }
+}

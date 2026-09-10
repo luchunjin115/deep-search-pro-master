@@ -9,6 +9,7 @@ from app.schemas.retrieval import (
     DenseRetrievalScore,
     LexicalRetrievalScore,
     PdfRetrievalSourceLocator,
+    RetrievalCandidateFailure,
     RetrievalCandidateIdentity,
     RetrievalDocumentMetadata,
     RetrievalEmbeddingIdentity,
@@ -185,6 +186,37 @@ def test_hybrid_returns_empty_with_both_reproducibility_identities() -> None:
     assert response.embedding_identity == _EMBEDDING_IDENTITY
     assert response.fts_identity == _FTS_IDENTITY
     assert response.rrf_k == 60
+
+
+def test_hybrid_preserves_route_rank_gaps_and_propagates_mapping_failure() -> None:
+    broken_chunk_id = UUID(int=50)
+    valid_chunk_id = UUID(int=51)
+    dense_response = RetrievalResponse(
+        mode="dense",
+        embedding_identity=_EMBEDDING_IDENTITY,
+        results=[_result(valid_chunk_id, mode="dense", rank=2)],
+        candidate_failures=[
+            RetrievalCandidateFailure(
+                source_mode="dense",
+                rank=1,
+                chunk_id=broken_chunk_id,
+                stage="source_locator_mapping",
+                reason="invalid_source_locator",
+            )
+        ],
+    )
+    service = HybridRetrievalService(
+        StubRetriever(dense_response),
+        StubRetriever(_lexical_response([])),
+    )
+
+    response = service.retrieve(_USER, RetrievalRequest(query="控制码"))
+
+    assert [result.identity.chunk_id for result in response.results] == [valid_chunk_id]
+    assert response.results[0].scores.dense is not None
+    assert response.results[0].scores.dense.rank == 2
+    assert response.results[0].rrf_score == pytest.approx(1 / 62)
+    assert response.candidate_failures == dense_response.candidate_failures
 
 
 def test_hybrid_rejects_conflicting_facts_for_the_same_chunk() -> None:

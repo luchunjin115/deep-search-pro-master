@@ -17,6 +17,7 @@ from app.schemas.auth import CurrentUser
 from app.schemas.common import MarketCode
 from app.schemas.retrieval import (
     DenseRetrievalScore,
+    RetrievalCandidateFailure,
     RetrievalCandidateIdentity,
     RetrievalDocumentMetadata,
     RetrievalEmbeddingIdentity,
@@ -39,7 +40,10 @@ from app.services.retrieval.errors import (
     RetrievalInputError,
     RetrievalInternalError,
 )
-from app.services.retrieval.result_mapping import source_locator_from_candidate
+from app.services.retrieval.result_mapping import (
+    RetrievalSourceLocatorMappingError,
+    source_locator_from_candidate,
+)
 
 _T = TypeVar("_T")
 
@@ -131,14 +135,24 @@ class DenseRetrievalService:
             )
         )
         try:
-            results = [
-                _result_from_candidate(candidate, rank=rank)
-                for rank, candidate in enumerate(candidates, start=1)
-            ]
+            results: list[RetrievalResult] = []
+            candidate_failures: list[RetrievalCandidateFailure] = []
+            for rank, candidate in enumerate(candidates, start=1):
+                try:
+                    results.append(_result_from_candidate(candidate, rank=rank))
+                except RetrievalSourceLocatorMappingError:
+                    candidate_failures.append(
+                        RetrievalCandidateFailure(
+                            source_mode="dense",
+                            rank=rank,
+                            chunk_id=candidate.chunk_id,
+                        )
+                    )
             return RetrievalResponse(
                 mode="dense",
                 embedding_identity=public_identity,
                 results=results,
+                candidate_failures=candidate_failures,
             )
         except (TypeError, ValueError, ValidationError):
             raise RetrievalInternalError from None

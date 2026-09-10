@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import logging
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -20,6 +21,7 @@ from app.services.documents.parsers import (
     CsvParser,
     DocumentEnhancementError,
     DocumentParseError,
+    DocumentQualityRejected,
     DocxParser,
     PdfParser,
     XlsxParser,
@@ -33,7 +35,9 @@ from app.services.documents.parsers.native import adapt_native_parse_result
 from app.services.documents.quality import (
     ParseQualityDecision,
     ParseRoute,
+    PostParseQualityDecision,
     decide_parse_route,
+    evaluate_post_parse_quality,
     infer_complexity_tags,
 )
 
@@ -50,6 +54,7 @@ _ZIP_TYPE_MEMBERS = {
     "docx": frozenset({"[Content_Types].xml", "word/document.xml"}),
     "xlsx": frozenset({"[Content_Types].xml", "xl/workbook.xml"}),
 }
+_LOGGER = logging.getLogger(__name__)
 
 
 class ArtifactComparison(M1Schema):
@@ -78,6 +83,7 @@ class RoutedParseResult(M1Schema):
     native_artifact: CanonicalParsedArtifact
     docling_artifact: CanonicalParsedArtifact | None = None
     comparison: ArtifactComparison | None = None
+    post_parse_quality: PostParseQualityDecision | None = None
 
     @model_validator(mode="after")
     def validate_route_contract(self) -> RoutedParseResult:
@@ -103,6 +109,42 @@ class RoutedParseResult(M1Schema):
             raise ValueError("Docling route must select the Docling artifact")
         elif self.route == "hybrid" and self.selected_artifact != self.native_artifact:
             raise ValueError("hybrid Office route must preserve Native facts")
+        if self.post_parse_quality is not None:
+            if self.post_parse_quality.status != "accepted":
+                raise ValueError("rejected post-parse results cannot be published")
+            if (
+                self.post_parse_quality.native_character_count
+                != self.native_artifact.statistics.character_count
+                or self.post_parse_quality.final_character_count
+                != self.selected_artifact.statistics.character_count
+            ):
+                raise ValueError("post-parse counts do not match routed artifacts")
+            health = self.quality.native_text_health
+            if health is None:
+                raise ValueError("post-parse quality requires Native text health")
+            expected_ratio = (
+                round(
+                    self.selected_artifact.statistics.character_count
+                    / self.native_artifact.statistics.character_count,
+                    6,
+                )
+                if health.status == "healthy"
+                and self.native_artifact.statistics.character_count > 0
+                else None
+            )
+            if self.post_parse_quality.character_retention_ratio != expected_ratio:
+                raise ValueError("post-parse retention ratio is inconsistent")
+            if self.selected_artifact.source_type != "pdf" and (
+                self.post_parse_quality.page_assessments
+                or self.post_parse_quality.native_page_count is not None
+                or self.post_parse_quality.final_page_count is not None
+            ):
+                raise ValueError("only PDF results may contain page quality")
+            if (
+                self.selected_artifact.source_type != "docx"
+                and self.post_parse_quality.docx_image_assessments
+            ):
+                raise ValueError("only DOCX results may contain image OCR quality")
         return self
 
 
@@ -139,9 +181,19 @@ class DocumentParserRouter:
         quality = decide_parse_route(
             native_artifact,
             complexity_tags=tuple(sorted(set(complexity_tags) | set(inferred_tags))),
+            minimum_character_count=self._settings.native_text_min_characters,
+            minimum_page_character_count=(
+                self._settings.pdf_low_text_character_threshold
+            ),
+            minimum_valid_character_ratio=(
+                self._settings.native_text_min_valid_character_ratio
+            ),
+            minimum_healthy_page_ratio=(
+                self._settings.native_text_min_healthy_page_ratio
+            ),
         )
         if quality.route == "native":
-            return RoutedParseResult(
+            return self._release_result(
                 route="native",
                 reasons=quality.reasons,
                 quality=quality,
@@ -178,7 +230,7 @@ class DocumentParserRouter:
 
         comparison = _compare(native_artifact, docling_artifact)
         selected = docling_artifact if quality.route == "docling" else native_artifact
-        return RoutedParseResult(
+        return self._release_result(
             route=quality.route,
             reasons=quality.reasons,
             quality=quality,
@@ -186,6 +238,61 @@ class DocumentParserRouter:
             native_artifact=native_artifact,
             docling_artifact=docling_artifact,
             comparison=comparison,
+        )
+
+    def _release_result(
+        self,
+        *,
+        route: ParseRoute,
+        reasons: list[str],
+        quality: ParseQualityDecision,
+        selected_artifact: CanonicalParsedArtifact,
+        native_artifact: CanonicalParsedArtifact,
+        docling_artifact: CanonicalParsedArtifact | None = None,
+        comparison: ArtifactComparison | None = None,
+    ) -> RoutedParseResult:
+        health = quality.native_text_health
+        if health is None:
+            raise DocumentParseError
+        post_quality = evaluate_post_parse_quality(
+            native_artifact=native_artifact,
+            selected_artifact=selected_artifact,
+            native_text_health=health,
+            minimum_final_native_ratio=(
+                self._settings.post_parse_min_final_native_ratio
+            ),
+            minimum_page_character_count=(
+                self._settings.post_parse_min_page_characters
+            ),
+            native_page_baseline_character_count=(
+                self._settings.post_parse_native_page_baseline_characters
+            ),
+            docx_empty_ocr_min_image_bytes=(
+                self._settings.docx_empty_ocr_min_image_bytes
+            ),
+            minimum_docx_body_character_count=(
+                self._settings.native_text_min_characters
+            ),
+        )
+        if post_quality.status == "rejected":
+            _LOGGER.warning(
+                "post_parse_quality status=rejected policy=%s rejection_codes=%s "
+                + "native_characters=%s final_characters=%s",
+                post_quality.policy_version,
+                ",".join(post_quality.rejection_codes),
+                post_quality.native_character_count,
+                post_quality.final_character_count,
+            )
+            raise DocumentQualityRejected(post_quality)
+        return RoutedParseResult(
+            route=route,
+            reasons=reasons,
+            quality=quality,
+            selected_artifact=selected_artifact,
+            native_artifact=native_artifact,
+            docling_artifact=docling_artifact,
+            comparison=comparison,
+            post_parse_quality=post_quality,
         )
 
     def _parse_native(self, source_type: ArtifactSourceType, content: bytes):  # type: ignore[no-untyped-def]

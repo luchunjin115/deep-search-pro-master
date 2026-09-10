@@ -25,8 +25,13 @@ CHUNK_ARTIFACT_SCHEMA_VERSION: Literal["m2-canonical-chunk-artifact-v1"] = (
 )
 CHUNK_CONTENT_HASH_VERSION: Literal["m2-chunk-content-v1"] = "m2-chunk-content-v1"
 CHUNKER_NAME: Literal["structure_aware"] = "structure_aware"
-CHUNKER_VERSION: Literal["m2-structure-aware-chunker-v1"] = (
-    "m2-structure-aware-chunker-v1"
+ChunkerVersion = Literal[
+    "m2-structure-aware-chunker-v1",
+    "m2-structure-aware-chunker-v2",
+    "m2-structure-aware-chunker-v3",
+]
+CHUNKER_VERSION: Literal["m2-structure-aware-chunker-v3"] = (
+    "m2-structure-aware-chunker-v3"
 )
 NORMALIZATION_VERSION: Literal["m2-chunk-normalization-v1"] = (
     "m2-chunk-normalization-v1"
@@ -57,7 +62,7 @@ class ChunkerIdentity(M1Schema):
     """Algorithm provenance; every behavior change requires a new version."""
 
     name: Literal["structure_aware"] = CHUNKER_NAME
-    version: Literal["m2-structure-aware-chunker-v1"] = CHUNKER_VERSION
+    version: ChunkerVersion = CHUNKER_VERSION
     token_counter_name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
     token_counter_version: str = Field(
         pattern=r"^m2-[a-z0-9-]+-v[0-9]+$",
@@ -106,8 +111,16 @@ class ChunkSourceSpan(M1Schema):
     block_id: str = Field(pattern=r"^b[0-9]{6}$")
     start_locator: SourceLocator
     end_locator: SourceLocator
-    character_start: int | None = Field(default=None, ge=0)
-    character_end: int | None = Field(default=None, ge=1)
+    character_start: int | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    character_end: int | None = Field(
+        default=None,
+        ge=1,
+        exclude_if=lambda value: value is None,
+    )
     bounding_boxes: list[ArtifactBoundingBox] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -120,6 +133,24 @@ class ChunkSourceSpan(M1Schema):
             and self.character_start >= self.character_end
         ):
             raise ValueError("character offsets must have positive length")
+        return self
+
+
+class ChunkHeadingSource(M1Schema):
+    """Exact Parser source promoted into one Chunk's heading metadata."""
+
+    heading_path_index: int = Field(ge=0, le=8)
+    heading_text: str = Field(min_length=1, max_length=200)
+    source_text: str = Field(min_length=1, max_length=20_000)
+    source_span: ChunkSourceSpan
+
+    @model_validator(mode="after")
+    def require_exact_character_range(self) -> ChunkHeadingSource:
+        if (
+            self.source_span.character_start is None
+            or self.source_span.character_end is None
+        ):
+            raise ValueError("heading metadata source requires exact character offsets")
         return self
 
 
@@ -196,6 +227,11 @@ class DocumentChunk(M1Schema):
     retrieval_text: str = Field(min_length=1, max_length=2_000_000)
     token_count: int = Field(ge=1, le=1_000_000)
     heading_path: list[str] = Field(default_factory=list, max_length=9)
+    heading_sources: list[ChunkHeadingSource] = Field(
+        default_factory=list,
+        max_length=9,
+        exclude_if=lambda value: not value,
+    )
     source_block_ids: list[str] = Field(min_length=1, max_length=1000)
     source_spans: list[ChunkSourceSpan] = Field(min_length=1, max_length=1000)
     page_numbers: list[int] = Field(default_factory=list, max_length=2000)
@@ -213,6 +249,17 @@ class DocumentChunk(M1Schema):
             raise ValueError("source block IDs must be unique and ordered")
         if self.page_numbers != sorted(set(self.page_numbers)):
             raise ValueError("chunk page numbers must be unique and ordered")
+        heading_indexes = [item.heading_path_index for item in self.heading_sources]
+        if self.kind != "text" and self.heading_sources:
+            raise ValueError("only text chunks can bind extracted heading sources")
+        if heading_indexes != sorted(set(heading_indexes)):
+            raise ValueError("heading source path indexes must be unique and ordered")
+        if any(
+            item.heading_path_index >= len(self.heading_path)
+            or item.heading_text != self.heading_path[item.heading_path_index]
+            for item in self.heading_sources
+        ):
+            raise ValueError("heading sources must match their heading path entries")
         expected = canonical_sha256(
             self.model_dump(mode="json", exclude={"content_sha256"})
         )
@@ -225,10 +272,40 @@ class ExcludedChunkSpan(M1Schema):
     """Source text deliberately not indexed, retained for loss auditing."""
 
     block_id: str = Field(pattern=r"^b[0-9]{6}$")
-    reason: Literal["blank", "repeated_header", "repeated_footer", "noise"]
+    reason: Literal[
+        "blank",
+        "repeated_header",
+        "repeated_footer",
+        "heading_metadata",
+        "noise",
+    ]
     text: str = Field(max_length=20_000)
     locator: SourceLocator
     bounding_box: ArtifactBoundingBox | None = None
+    character_start: int | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    character_end: int | None = Field(
+        default=None,
+        ge=1,
+        exclude_if=lambda value: value is None,
+    )
+
+    @model_validator(mode="after")
+    def validate_character_range(self) -> ExcludedChunkSpan:
+        if (self.character_start is None) != (self.character_end is None):
+            raise ValueError("excluded character offsets must be provided together")
+        if (
+            self.character_start is not None
+            and self.character_end is not None
+            and self.character_start >= self.character_end
+        ):
+            raise ValueError("excluded character offsets must have positive length")
+        if self.reason == "heading_metadata" and self.character_start is None:
+            raise ValueError("heading metadata exclusions require exact offsets")
+        return self
 
 
 class SkippedTableBlock(M1Schema):

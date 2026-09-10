@@ -61,7 +61,8 @@ _ZIP_REQUIRED_MEMBERS: dict[FileExtension, frozenset[str]] = {
     ".xlsx": frozenset({"[Content_Types].xml", "_rels/.rels", "xl/workbook.xml"}),
 }
 _MAX_ARCHIVE_MEMBERS = 10_000
-_MAX_ARCHIVE_EXPANSION = 20
+_MAX_ARCHIVE_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
+_MAX_ARCHIVE_EXPANSION = 200
 
 FILE_TRANSITIONS: dict[str, frozenset[str]] = {
     "uploaded": frozenset({"validating", "failed", "soft_deleted"}),
@@ -455,12 +456,13 @@ class FileService:
                 with zipfile.ZipFile(stream) as archive:
                     members = archive.infolist()
                     names = {member.filename for member in members}
+                    uncompressed_bytes = sum(member.file_size for member in members)
                     if (
                         len(members) > _MAX_ARCHIVE_MEMBERS
                         or not _ZIP_REQUIRED_MEMBERS[extension].issubset(names)
                         or any(member.flag_bits & 0x1 for member in members)
-                        or sum(member.file_size for member in members)
-                        > size_bytes * _MAX_ARCHIVE_EXPANSION
+                        or uncompressed_bytes > _MAX_ARCHIVE_UNCOMPRESSED_BYTES
+                        or uncompressed_bytes > size_bytes * _MAX_ARCHIVE_EXPANSION
                     ):
                         raise FileUploadValidationError
             except zipfile.BadZipFile:

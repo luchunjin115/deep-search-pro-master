@@ -8,10 +8,14 @@ from pydantic import ValidationError
 
 from app.services.documents.artifacts import (
     ArtifactBoundingBox,
+    ArtifactHeadingHint,
+    ArtifactPdfLayoutLine,
     ArtifactTableBlock,
     ArtifactTextBlock,
     CanonicalParsedArtifact,
     artifact_to_markdown,
+    build_canonical_artifact,
+    calculate_artifact_content_sha256,
 )
 from app.services.documents.parsers import CsvParser, DocxParser, PdfParser, XlsxParser
 from app.services.documents.parsers.native import adapt_native_parse_result
@@ -21,7 +25,7 @@ from scripts.seed_m2_complex_files import (
 )
 from scripts.seed_m2_files import generate_sources, load_seed_definition
 from tests.fixtures.docx_factory import make_structured_docx
-from tests.fixtures.pdf_factory import make_text_pdf
+from tests.fixtures.pdf_factory import make_text_pdf, make_two_column_text_pdf
 from tests.fixtures.spreadsheet_factory import (
     make_structured_xlsx,
     make_utf8_sig_semicolon_csv,
@@ -43,7 +47,7 @@ def test_pdf_adapter_preserves_pages_headings_warnings_and_stable_hash() -> None
     assert first.schema_version == "m2-canonical-parsed-artifact-v1"
     assert first.parser.provider == "native"
     assert first.parser.name == "pymupdf"
-    assert first.parser.adapter_version == "m2-native-adapter-v1"
+    assert first.parser.adapter_version == "m2-native-pdf-adapter-v2"
     assert first.statistics.page_count == 3
     assert first.statistics.character_count == sum(
         page.character_count for page in parsed.pages
@@ -62,6 +66,9 @@ def test_pdf_adapter_preserves_pages_headings_warnings_and_stable_hash() -> None
     assert page_one.heading_hints[0].font_size == (
         parsed.pages[0].heading_hints[0].font_size
     )
+    assert page_one.pdf_layout_lines
+    assert page_one.heading_hints[0].layout_line_number is not None
+    assert page_one.heading_hints[0].bounding_box is not None
     assert [warning.model_dump() for warning in first.warnings] == [
         warning.model_dump() for warning in parsed.warnings
     ]
@@ -75,8 +82,103 @@ def test_pdf_adapter_preserves_pages_headings_warnings_and_stable_hash() -> None
         "Xynthetic",
         1,
     )
-    with pytest.raises(ValidationError, match="content hash"):
+    with pytest.raises(ValidationError, match="range|content hash"):
         CanonicalParsedArtifact.model_validate(tampered)
+
+
+def test_pdf_adapter_keeps_two_column_lines_distinct_and_hashes_locator_facts() -> None:
+    source = make_two_column_text_pdf()
+    parsed = PdfParser().parse(io.BytesIO(source))
+    artifact = adapt_native_parse_result(parsed, source_sha256=_source_hash(source))
+    block = artifact.blocks[0]
+
+    assert isinstance(block, ArtifactTextBlock)
+    left = next(line for line in block.pdf_layout_lines if line.text == "Left Sales")
+    right = next(
+        line for line in block.pdf_layout_lines if line.text == "Right Actions"
+    )
+    assert left.bounding_box.right < right.bounding_box.left
+    assert block.text[left.character_start : left.character_end] == left.text
+    assert block.text[right.character_start : right.character_end] == right.text
+    assert artifact == adapt_native_parse_result(
+        parsed,
+        source_sha256=_source_hash(source),
+    )
+
+    shifted_box = left.bounding_box.model_copy(
+        update={"left": left.bounding_box.left + 1}
+    )
+    changed_lines = [
+        line.model_copy(update={"bounding_box": shifted_box})
+        if line.line_number == left.line_number
+        else line
+        for line in block.pdf_layout_lines
+    ]
+    changed_block = block.model_copy(
+        update={"pdf_layout_lines": changed_lines, "heading_hints": []}
+    )
+    changed = artifact.model_dump(mode="json", exclude={"content_sha256"})
+    changed["blocks"] = [changed_block.model_dump(mode="json")]
+    changed_hash = calculate_artifact_content_sha256(changed)
+    assert changed_hash != artifact.content_sha256
+
+
+def test_pdf_layout_contract_rejects_fake_ranges_and_reads_legacy_blocks() -> None:
+    box = ArtifactBoundingBox(
+        page_number=1,
+        left=10,
+        top=20,
+        right=110,
+        bottom=40,
+        page_width=612,
+        page_height=792,
+    )
+    legacy = ArtifactTextBlock.model_validate(
+        {
+            "block_id": "b000001",
+            "text": "legacy PDF text",
+            "locator": {"page_number": 1},
+        }
+    )
+    assert legacy.pdf_layout_lines == []
+    legacy_artifact = build_canonical_artifact(
+        source_type="pdf",
+        source_sha256="f" * 64,
+        parser_name="pymupdf",
+        parser_version="m2-pdf-v1+pymupdf-1.0",
+        blocks=[legacy],
+        warnings=[],
+        source_character_count=13,
+        page_count=1,
+    )
+    legacy_payload = legacy_artifact.model_dump(mode="json")
+    assert "pdf_layout_lines" not in legacy_payload["blocks"][0]
+    assert CanonicalParsedArtifact.model_validate(legacy_payload) == legacy_artifact
+
+    with pytest.raises(ValidationError, match="requires a bounding box"):
+        ArtifactHeadingHint(
+            text="Heading",
+            level=1,
+            locator={"page_number": 1},
+            layout_line_number=1,
+        )
+
+    with pytest.raises(ValidationError, match="layout line text"):
+        ArtifactTextBlock(
+            block_id="b000001",
+            text="trusted source text",
+            locator={"page_number": 1},
+            pdf_layout_lines=[
+                ArtifactPdfLayoutLine(
+                    line_number=1,
+                    text="invented text",
+                    character_start=0,
+                    character_end=8,
+                    locator={"page_number": 1},
+                    bounding_box=box,
+                )
+            ],
+        )
 
 
 def test_docx_adapter_preserves_body_order_heading_paths_tables_and_markdown() -> None:

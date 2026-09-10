@@ -13,6 +13,7 @@ from app.schemas.auth import CurrentUser
 from app.schemas.common import MarketCode
 from app.schemas.retrieval import (
     LexicalRetrievalScore,
+    RetrievalCandidateFailure,
     RetrievalCandidateIdentity,
     RetrievalDocumentMetadata,
     RetrievalFtsIdentity,
@@ -33,7 +34,10 @@ from app.services.retrieval.lexical_text import (
     FtsTextPurpose,
     get_fts_text_builder,
 )
-from app.services.retrieval.result_mapping import source_locator_from_candidate
+from app.services.retrieval.result_mapping import (
+    RetrievalSourceLocatorMappingError,
+    source_locator_from_candidate,
+)
 
 _T = TypeVar("_T")
 
@@ -103,14 +107,24 @@ class LexicalRetrievalService:
             )
         )
         try:
-            results = [
-                _result_from_candidate(candidate, rank=rank)
-                for rank, candidate in enumerate(candidates, start=1)
-            ]
+            results: list[RetrievalResult] = []
+            candidate_failures: list[RetrievalCandidateFailure] = []
+            for rank, candidate in enumerate(candidates, start=1):
+                try:
+                    results.append(_result_from_candidate(candidate, rank=rank))
+                except RetrievalSourceLocatorMappingError:
+                    candidate_failures.append(
+                        RetrievalCandidateFailure(
+                            source_mode="lexical",
+                            rank=rank,
+                            chunk_id=candidate.chunk_id,
+                        )
+                    )
             return RetrievalResponse(
                 mode="lexical",
                 fts_identity=public_identity,
                 results=results,
+                candidate_failures=candidate_failures,
             )
         except (TypeError, ValueError, ValidationError):
             raise RetrievalInternalError from None

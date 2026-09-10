@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass
+from itertools import pairwise
 from math import isfinite
 from typing import TYPE_CHECKING, BinaryIO, Literal, Self
 
@@ -23,8 +25,54 @@ if TYPE_CHECKING:
     from app.core.config import Settings
 
 PARSER_NAME: Literal["pymupdf"] = "pymupdf"
-PARSER_VERSION = f"m2-pdf-v1+pymupdf-{pymupdf.VersionBind}"
+PARSER_VERSION = f"m2-pdf-v2+pymupdf-{pymupdf.VersionBind}"
 _READ_CHUNK_BYTES = 1024 * 1024
+
+
+class PdfBoundingBox(M1Schema):
+    """One top-left PDF rectangle in explicit physical page dimensions."""
+
+    page_number: int = Field(ge=1, le=2000)
+    left: float = Field(ge=0)
+    top: float = Field(ge=0)
+    right: float = Field(gt=0)
+    bottom: float = Field(gt=0)
+    page_width: float = Field(gt=0)
+    page_height: float = Field(gt=0)
+    coordinate_system: Literal["top_left"] = "top_left"
+
+    @model_validator(mode="after")
+    def validate_geometry(self) -> PdfBoundingBox:
+        if self.left >= self.right or self.top >= self.bottom:
+            raise ValueError("bounding box must have positive area")
+        if self.right > self.page_width or self.bottom > self.page_height:
+            raise ValueError("bounding box must stay inside the page")
+        return self
+
+
+class PdfLayoutLine(M1Schema):
+    """A physical PDF line plus its optional real range in the page text."""
+
+    line_number: int = Field(ge=1, le=100_000)
+    text: str = Field(min_length=1, max_length=1_000_000)
+    character_start: int | None = Field(default=None, ge=0, le=5_000_000)
+    character_end: int | None = Field(default=None, gt=0, le=5_000_000)
+    locator: SourceLocator
+    bounding_box: PdfBoundingBox
+
+    @model_validator(mode="after")
+    def validate_location(self) -> PdfLayoutLine:
+        if (self.character_start is None) != (self.character_end is None):
+            raise ValueError("PDF line character range must be complete or absent")
+        if (
+            self.character_start is not None
+            and self.character_end is not None
+            and self.character_start >= self.character_end
+        ):
+            raise ValueError("PDF line character range must have positive length")
+        if self.locator.page_number != self.bounding_box.page_number:
+            raise ValueError("PDF line bounding box page does not match its locator")
+        return self
 
 
 class PdfHeadingHint(M1Schema):
@@ -34,6 +82,8 @@ class PdfHeadingHint(M1Schema):
     level: int = Field(ge=1, le=6)
     font_size: float = Field(gt=0, le=1000)
     locator: SourceLocator
+    layout_line_number: int = Field(ge=1, le=100_000)
+    bounding_box: PdfBoundingBox
 
 
 class PdfPageText(M1Schema):
@@ -45,12 +95,47 @@ class PdfPageText(M1Schema):
     image_count: int = Field(ge=0)
     low_text: bool
     heading_hints: list[PdfHeadingHint] = Field(max_length=100)
+    layout_lines: list[PdfLayoutLine] = Field(max_length=100_000)
 
     @model_validator(mode="after")
     def validate_character_count(self) -> PdfPageText:
         actual = sum(not character.isspace() for character in self.text)
         if self.character_count != actual:
             raise ValueError("character_count does not match text")
+        if [line.line_number for line in self.layout_lines] != list(
+            range(1, len(self.layout_lines) + 1)
+        ):
+            raise ValueError("PDF layout lines must be a complete one-based sequence")
+        mapped_ranges: list[tuple[int, int]] = []
+        lines_by_number = {line.line_number: line for line in self.layout_lines}
+        for line in self.layout_lines:
+            if (
+                line.locator.page_number != self.page_number
+                or line.bounding_box.page_number != self.page_number
+            ):
+                raise ValueError("PDF layout line belongs to a different page")
+            if line.character_start is None or line.character_end is None:
+                continue
+            if line.character_end > len(self.text):
+                raise ValueError("PDF layout line range exceeds page text")
+            if _locator_text(self.text[line.character_start : line.character_end]) != (
+                _locator_text(line.text)
+            ):
+                raise ValueError("PDF layout line range does not match page text")
+            mapped_ranges.append((line.character_start, line.character_end))
+        for previous, current in pairwise(sorted(mapped_ranges)):
+            if current[0] < previous[1]:
+                raise ValueError("PDF layout line character ranges cannot overlap")
+        for hint in self.heading_hints:
+            referenced_line = lines_by_number.get(hint.layout_line_number)
+            if referenced_line is None:
+                raise ValueError("PDF heading hint references a missing layout line")
+            if (
+                hint.locator.page_number != self.page_number
+                or hint.text != referenced_line.text
+                or hint.bounding_box != referenced_line.bounding_box
+            ):
+                raise ValueError("PDF heading hint does not match its layout line")
         return self
 
 
@@ -75,8 +160,12 @@ class PdfParseResult(M1Schema):
 @dataclass(frozen=True, slots=True)
 class _LineCandidate:
     page_number: int
+    line_number: int
     text: str
     font_size: float
+    character_start: int | None
+    character_end: int | None
+    bounding_box: PdfBoundingBox
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +265,17 @@ class PdfParser:
                         draft.character_count < self._low_text_character_threshold
                     ),
                     heading_hints=headings.get(draft.page_number, []),
+                    layout_lines=[
+                        PdfLayoutLine(
+                            line_number=line.line_number,
+                            text=line.text,
+                            character_start=line.character_start,
+                            character_end=line.character_end,
+                            locator=SourceLocator(page_number=line.page_number),
+                            bounding_box=line.bounding_box,
+                        )
+                        for line in draft.lines
+                    ],
                 )
                 for draft in drafts
             ]
@@ -218,7 +318,9 @@ class PdfParser:
         text = "\n".join(normalized_lines).strip()
         character_count = sum(not character.isspace() for character in text)
         raw_dict = page.get_text("dict", sort=True)  # type: ignore[no-untyped-call]
-        lines: list[_LineCandidate] = []
+        raw_lines: list[tuple[str, float, PdfBoundingBox]] = []
+        page_width = float(page.rect.width)
+        page_height = float(page.rect.height)
         for block in raw_dict.get("blocks", []):
             if block.get("type") != 0:
                 continue
@@ -231,19 +333,49 @@ class PdfParser:
                     if isfinite(float(span.get("size", 0)))
                 ]
                 if line_text and sizes:
-                    lines.append(
-                        _LineCandidate(
-                            page_number=page_number,
-                            text=line_text,
-                            font_size=max(sizes),
+                    raw_bbox = line.get("bbox")
+                    if not isinstance(raw_bbox, (list, tuple)) or len(raw_bbox) != 4:
+                        continue
+                    raw_lines.append(
+                        (
+                            line_text,
+                            max(sizes),
+                            PdfBoundingBox(
+                                page_number=page_number,
+                                left=float(raw_bbox[0]),
+                                top=float(raw_bbox[1]),
+                                right=float(raw_bbox[2]),
+                                bottom=float(raw_bbox[3]),
+                                page_width=page_width,
+                                page_height=page_height,
+                            ),
                         )
                     )
+        mapped_ranges = _map_layout_line_ranges(
+            text,
+            [line_text for line_text, _font_size, _bounding_box in raw_lines],
+        )
+        lines = tuple(
+            _LineCandidate(
+                page_number=page_number,
+                line_number=line_number,
+                text=line_text,
+                font_size=font_size,
+                character_start=character_range[0],
+                character_end=character_range[1],
+                bounding_box=bounding_box,
+            )
+            for line_number, (
+                (line_text, font_size, bounding_box),
+                character_range,
+            ) in enumerate(zip(raw_lines, mapped_ranges, strict=True), start=1)
+        )
         return _PageDraft(
             page_number=page_number,
             text=text,
             character_count=character_count,
             image_count=len(page.get_images(full=True)),  # type: ignore[no-untyped-call]
-            lines=tuple(lines),
+            lines=lines,
         )
 
     @staticmethod
@@ -282,6 +414,8 @@ class PdfParser:
                     level=levels[round(line.font_size, 1)],
                     font_size=round(line.font_size, 2),
                     locator=SourceLocator(page_number=line.page_number),
+                    layout_line_number=line.line_number,
+                    bounding_box=line.bounding_box,
                 )
             )
         return by_page
@@ -316,3 +450,35 @@ class PdfParser:
                     )
                 )
         return warnings
+
+
+def _map_layout_line_ranges(
+    page_text: str,
+    line_texts: list[str],
+) -> list[tuple[int | None, int | None]]:
+    """Map only provable non-overlapping substrings; leave ambiguity explicit."""
+
+    used_ranges: list[tuple[int, int]] = []
+    mapped: list[tuple[int | None, int | None]] = []
+    for line_text in line_texts:
+        parts = re.split(r"[^\S\r\n]+", line_text.strip())
+        pattern = re.compile(r"[^\S\r\n]+".join(re.escape(part) for part in parts))
+        candidates = [
+            match.span()
+            for match in pattern.finditer(page_text)
+            if not any(
+                match.start() < used_end and match.end() > used_start
+                for used_start, used_end in used_ranges
+            )
+        ]
+        if not candidates:
+            mapped.append((None, None))
+            continue
+        selected = candidates[0]
+        used_ranges.append(selected)
+        mapped.append(selected)
+    return mapped
+
+
+def _locator_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()

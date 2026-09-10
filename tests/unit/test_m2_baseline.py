@@ -16,6 +16,9 @@ M2_ENVIRONMENT_VARIABLES = (
     "DOCLING_DEVICE",
     "DOCLING_NUM_THREADS",
     "DOCLING_DOCUMENT_TIMEOUT_SECONDS",
+    "DOCLING_PROCESS_TIMEOUT_SECONDS",
+    "DOCLING_PROCESS_MAX_RSS_BYTES",
+    "DOCLING_PROCESS_MAX_SNAPSHOT_BYTES",
     "DOCLING_OCR_ENGINE",
     "DOCLING_ENABLE_REMOTE_SERVICES",
     "DOCLING_ALLOW_EXTERNAL_PLUGINS",
@@ -27,12 +30,25 @@ M2_ENVIRONMENT_VARIABLES = (
     "PDF_MAX_PAGES",
     "PDF_MAX_EXTRACTED_CHARACTERS",
     "PDF_LOW_TEXT_CHARACTER_THRESHOLD",
+    "NATIVE_TEXT_MIN_CHARACTERS",
+    "NATIVE_TEXT_MIN_VALID_CHARACTER_RATIO",
+    "NATIVE_TEXT_MIN_HEALTHY_PAGE_RATIO",
+    "POST_PARSE_MIN_FINAL_NATIVE_RATIO",
+    "POST_PARSE_MIN_PAGE_CHARACTERS",
+    "POST_PARSE_NATIVE_PAGE_BASELINE_CHARACTERS",
+    "DOCX_EMPTY_OCR_MIN_IMAGE_BYTES",
     "DOCX_MAX_ARCHIVE_MEMBERS",
     "DOCX_MAX_UNCOMPRESSED_BYTES",
     "DOCX_MAX_COMPRESSION_RATIO",
     "DOCX_MAX_BLOCKS",
     "DOCX_MAX_TABLE_CELLS",
     "DOCX_MAX_EXTRACTED_CHARACTERS",
+    "DOCX_IMAGE_OCR_BACKEND",
+    "DOCX_IMAGE_OCR_THREADS",
+    "DOCX_MAX_IMAGES",
+    "DOCX_MAX_IMAGE_BYTES",
+    "DOCX_MAX_TOTAL_IMAGE_BYTES",
+    "DOCX_MAX_IMAGE_PIXELS",
     "XLSX_MAX_ARCHIVE_MEMBERS",
     "XLSX_MAX_UNCOMPRESSED_BYTES",
     "XLSX_MAX_COMPRESSION_RATIO",
@@ -105,6 +121,9 @@ def test_m2_settings_use_safe_local_defaults() -> None:
     assert settings.docling_device == "cpu"
     assert settings.docling_num_threads == 4
     assert settings.docling_document_timeout_seconds == 120
+    assert settings.docling_process_timeout_seconds == 150.0
+    assert settings.docling_process_max_rss_bytes == 4 * 1024 * 1024 * 1024
+    assert settings.docling_process_max_snapshot_bytes == 64 * 1024 * 1024
     assert settings.docling_ocr_engine == "rapidocr"
     assert settings.docling_enable_remote_services is False
     assert settings.docling_allow_external_plugins is False
@@ -119,12 +138,25 @@ def test_m2_settings_use_safe_local_defaults() -> None:
     assert settings.pdf_max_pages == 500
     assert settings.pdf_max_extracted_characters == 5_000_000
     assert settings.pdf_low_text_character_threshold == 20
+    assert settings.native_text_min_characters == 20
+    assert settings.native_text_min_valid_character_ratio == 0.9
+    assert settings.native_text_min_healthy_page_ratio == 0.8
+    assert settings.post_parse_min_final_native_ratio == 0.7
+    assert settings.post_parse_min_page_characters == 10
+    assert settings.post_parse_native_page_baseline_characters == 50
+    assert settings.docx_empty_ocr_min_image_bytes == 5 * 1024
     assert settings.docx_max_archive_members == 5000
     assert settings.docx_max_uncompressed_bytes == 100 * 1024 * 1024
     assert settings.docx_max_compression_ratio == 200
     assert settings.docx_max_blocks == 50_000
     assert settings.docx_max_table_cells == 200_000
     assert settings.docx_max_extracted_characters == 5_000_000
+    assert settings.docx_image_ocr_backend == "rapidocr"
+    assert settings.docx_image_ocr_threads == 4
+    assert settings.docx_max_images == 100
+    assert settings.docx_max_image_bytes == 10 * 1024 * 1024
+    assert settings.docx_max_total_image_bytes == 25 * 1024 * 1024
+    assert settings.docx_max_image_pixels == 20_000_000
     assert settings.xlsx_max_archive_members == 5000
     assert settings.xlsx_max_uncompressed_bytes == 100 * 1024 * 1024
     assert settings.xlsx_max_compression_ratio == 200
@@ -207,6 +239,12 @@ def test_env_example_contains_a_valid_m2_configuration() -> None:
             {"docling_allow_external_plugins": True},
             "DOCLING_ALLOW_EXTERNAL_PLUGINS",
         ),
+        ({"docling_process_timeout_seconds": 0}, "docling_process_timeout_seconds"),
+        ({"docling_process_max_rss_bytes": 1024}, "docling_process_max_rss_bytes"),
+        (
+            {"docling_process_max_snapshot_bytes": 1023},
+            "docling_process_max_snapshot_bytes",
+        ),
         (
             {
                 "upload_max_file_size_bytes": 1024 * 1024,
@@ -217,6 +255,39 @@ def test_env_example_contains_a_valid_m2_configuration() -> None:
         ({"pdf_max_pages": 0}, "pdf_max_pages"),
         ({"pdf_max_extracted_characters": 9999}, "pdf_max_extracted_characters"),
         ({"pdf_low_text_character_threshold": 0}, "pdf_low_text_character_threshold"),
+        ({"native_text_min_characters": 0}, "native_text_min_characters"),
+        (
+            {"native_text_min_valid_character_ratio": 0.49},
+            "native_text_min_valid_character_ratio",
+        ),
+        (
+            {"native_text_min_healthy_page_ratio": 0.49},
+            "native_text_min_healthy_page_ratio",
+        ),
+        (
+            {"post_parse_min_final_native_ratio": 0.49},
+            "post_parse_min_final_native_ratio",
+        ),
+        ({"post_parse_min_page_characters": 0}, "post_parse_min_page_characters"),
+        (
+            {"post_parse_native_page_baseline_characters": 0},
+            "post_parse_native_page_baseline_characters",
+        ),
+        ({"docx_empty_ocr_min_image_bytes": 1023}, "docx_empty_ocr_min_image_bytes"),
+        (
+            {
+                "post_parse_min_page_characters": 50,
+                "post_parse_native_page_baseline_characters": 49,
+            },
+            "逐页Native基线",
+        ),
+        (
+            {
+                "docx_max_image_bytes": 4096,
+                "docx_empty_ocr_min_image_bytes": 5120,
+            },
+            "DOCX空OCR图片阈值",
+        ),
         ({"docx_max_archive_members": 9}, "docx_max_archive_members"),
         (
             {"docx_max_uncompressed_bytes": 9 * 1024 * 1024},
@@ -226,6 +297,11 @@ def test_env_example_contains_a_valid_m2_configuration() -> None:
         ({"docx_max_blocks": 99}, "docx_max_blocks"),
         ({"docx_max_table_cells": 99}, "docx_max_table_cells"),
         ({"docx_max_extracted_characters": 9999}, "docx_max_extracted_characters"),
+        ({"docx_image_ocr_threads": 0}, "docx_image_ocr_threads"),
+        ({"docx_max_images": 0}, "docx_max_images"),
+        ({"docx_max_image_bytes": 1023}, "docx_max_image_bytes"),
+        ({"docx_max_total_image_bytes": 1023}, "docx_max_total_image_bytes"),
+        ({"docx_max_image_pixels": 9999}, "docx_max_image_pixels"),
         ({"xlsx_max_archive_members": 9}, "xlsx_max_archive_members"),
         (
             {"xlsx_max_uncompressed_bytes": 9 * 1024 * 1024},
@@ -325,6 +401,7 @@ def test_m2_runtime_dependencies_are_declared_without_legacy_ragflow() -> None:
         "python-multipart",
         "pymupdf",
         "python-docx",
+        "pillow",
         "openpyxl",
         "pandas",
         "filetype",
@@ -335,6 +412,7 @@ def test_m2_runtime_dependencies_are_declared_without_legacy_ragflow() -> None:
         "docling",
         "rapidocr",
         "onnxruntime",
+        "psutil",
     } <= requirements
     assert "ragflow-sdk" not in requirements
 
@@ -346,7 +424,6 @@ def test_m2_runtime_dependencies_are_declared_without_legacy_ragflow() -> None:
         if line.strip() and not line.lstrip().startswith(("#", "-r"))
     }
     assert "reportlab" in development_requirements
-    assert "psutil" in development_requirements
 
 
 def test_new_app_ast_does_not_import_legacy_file_or_ragflow_runtime() -> None:
