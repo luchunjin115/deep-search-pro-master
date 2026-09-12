@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     database_connect_timeout_seconds: int = Field(default=5, ge=1, le=30)
     database_statement_timeout_ms: int = Field(default=2000, ge=50, le=30000)
 
-    llm_provider: Literal["mock", "qwen"] = "mock"
+    llm_provider: Literal["mock", "qwen", "deepseek"] = "mock"
     qwen_model: str = Field(
         default="qwen3.8-max",
         min_length=1,
@@ -64,6 +64,20 @@ class Settings(BaseSettings):
     qwen_api_key: SecretStr | None = None
     qwen_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
     qwen_agent_max_output_tokens: int = Field(default=4096, ge=256, le=8192)
+    deepseek_model: str = Field(
+        default="deepseek-v4-flash",
+        min_length=1,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$",
+    )
+    deepseek_base_url: str = Field(
+        default="https://api.deepseek.com",
+        min_length=1,
+        max_length=500,
+    )
+    deepseek_api_key: SecretStr | None = None
+    deepseek_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
+    deepseek_agent_max_output_tokens: int = Field(default=4096, ge=256, le=8192)
 
     jwt_secret_key: SecretStr = SecretStr(
         "local-development-only-change-before-production"
@@ -335,6 +349,22 @@ class Settings(BaseSettings):
             raise ValueError("QWEN_BASE_URL必须是无凭据、查询参数和片段的HTTPS地址")
         return normalized
 
+    @field_validator("deepseek_base_url")
+    @classmethod
+    def validate_deepseek_base_url(cls, value: str) -> str:
+        normalized = value.rstrip("/")
+        parsed = urlsplit(normalized)
+        if (
+            parsed.scheme != "https"
+            or not parsed.netloc
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("DEEPSEEK_BASE_URL必须是无凭据、查询参数和片段的HTTPS地址")
+        return normalized
+
     @field_validator("upload_allowed_extensions")
     @classmethod
     def validate_upload_allowed_extensions(
@@ -376,6 +406,11 @@ class Settings(BaseSettings):
             or not self.qwen_api_key.get_secret_value().strip()
         ):
             raise ValueError("LLM_PROVIDER=qwen时必须配置非空QWEN_API_KEY")
+        if self.llm_provider == "deepseek" and (
+            self.deepseek_api_key is None
+            or not self.deepseek_api_key.get_secret_value().strip()
+        ):
+            raise ValueError("LLM_PROVIDER=deepseek时必须配置非空DEEPSEEK_API_KEY")
 
         jwt_secret = self.jwt_secret_key.get_secret_value()
         if self.app_env == "production" and jwt_secret.startswith("local-development"):

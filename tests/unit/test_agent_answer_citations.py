@@ -22,6 +22,7 @@ from app.schemas.agent import (
 DATABASE_EVIDENCE_ID = UUID("20000000-0000-0000-0000-000000000001")
 DOCUMENT_EVIDENCE_ID = UUID("20000000-0000-0000-0000-000000000002")
 FORGED_EVIDENCE_ID = UUID("20000000-0000-0000-0000-000000000003")
+UNSELECTED_EVIDENCE_ID = UUID("20000000-0000-0000-0000-000000000004")
 
 
 def usage() -> ResourceUsage:
@@ -139,14 +140,47 @@ def test_answer_evidence_set_assigns_stable_cross_worker_labels() -> None:
     )
 
 
+def test_answer_evidence_set_includes_every_worker_candidate_once() -> None:
+    selected = knowledge_result()
+    observation = selected.observations[0]
+    assert observation.structured_result is not None
+    data = observation.structured_result.root["data"]
+    assert isinstance(data, dict)
+    segments = data["segments"]
+    assert isinstance(segments, list)
+    segments.append(
+        {
+            "evidence_id": str(UNSELECTED_EVIDENCE_ID),
+            "citation_label": "[E2]",
+            "source_type": "knowledge",
+            "title": "颜色手册",
+            "text": "这段未被Worker选中，不能进入最终回答模型。",
+        }
+    )
+    observation.evidence_ids.append(UNSELECTED_EVIDENCE_ID)
+    selected.evidence_ids.append(UNSELECTED_EVIDENCE_ID)
+
+    evidence_set = build_answer_evidence_set(
+        AnswerRequest(goal="说明补货规则", worker_results=(selected,))
+    )
+
+    assert [item.evidence_id for item in evidence_set.items] == [
+        DOCUMENT_EVIDENCE_ID,
+        UNSELECTED_EVIDENCE_ID,
+    ]
+    assert "未被Worker选中" in evidence_set.model_dump_json()
+
+
 def test_answer_evidence_set_rejects_result_reference_without_observation() -> None:
     orphan = business_result().model_copy(
         update={"evidence_ids": [DATABASE_EVIDENCE_ID, FORGED_EVIDENCE_ID]}
     )
     invalid_request = AnswerRequest(goal="回答库存", worker_results=(orphan,))
 
-    with pytest.raises(AgentProviderOutputError):
+    with pytest.raises(AgentProviderOutputError) as captured:
         build_answer_evidence_set(invalid_request)
+
+    assert captured.value.stage == "answer_input_contract"
 
 
 def test_answer_evidence_set_rejects_more_than_twelve_across_workers() -> None:
@@ -207,10 +241,11 @@ def test_answer_citations_map_labels_to_exact_server_owned_ids() -> None:
         "编号格式不规范 [E01]。",
         "编号不能小写 [e1]。",
         "编号不能使用全角括号 ［E1］。",
-        "同一个证据不能重复 [E1] [E1]。",
+        "合法重复不能掩盖伪造 [E1] [E1] [E3]。",
+        "合法重复不能掩盖畸形 [E1] [E1] [E01]。",
     ],
 )
-def test_answer_citations_reject_forged_malformed_or_duplicate_labels(
+def test_answer_citations_reject_forged_or_malformed_labels(
     summary: str,
 ) -> None:
     with pytest.raises(AgentProviderOutputError):
@@ -220,12 +255,36 @@ def test_answer_citations_reject_forged_malformed_or_duplicate_labels(
         )
 
 
-def test_answer_citations_reject_label_and_uuid_disagreement() -> None:
+@pytest.mark.parametrize("outcome", ["answered", "partial"])
+def test_repeated_body_citations_preserve_text_and_first_reference_order(
+    outcome,
+) -> None:
+    summary = "补货规则 [E2]；库存125件 [E1]；再次说明规则 [E2]。"
+    validated = validate_answer_citations(
+        request(),
+        answer(
+            summary,
+            evidence_ids=[DOCUMENT_EVIDENCE_ID, DATABASE_EVIDENCE_ID],
+            outcome=outcome,
+        ),
+    )
+    assert validated.action.public_summary == summary
+    assert validated.action.evidence_ids == [DOCUMENT_EVIDENCE_ID, DATABASE_EVIDENCE_ID]
     with pytest.raises(AgentProviderOutputError):
+        validate_answer_citations(
+            request(),
+            answer(summary, evidence_ids=[DATABASE_EVIDENCE_ID, DOCUMENT_EVIDENCE_ID]),
+        )
+
+
+def test_answer_citations_reject_label_and_uuid_disagreement() -> None:
+    with pytest.raises(AgentProviderOutputError) as captured:
         validate_answer_citations(
             request(),
             answer("库存事实 [E1]。", evidence_ids=[DOCUMENT_EVIDENCE_ID]),
         )
+
+    assert captured.value.stage == "citation_contract"
 
 
 def test_answered_with_available_evidence_requires_at_least_one_label() -> None:
@@ -241,7 +300,7 @@ def test_no_evidence_and_cannot_complete_must_not_claim_citations() -> None:
         validate_answer_citations(
             request(),
             answer(
-                "没有足够证据，但仍引用 [E1]。",
+                "没有足够证据，但仍引用 [E1] [E1]。",
                 evidence_ids=[DATABASE_EVIDENCE_ID],
                 outcome="no_evidence",
             ),

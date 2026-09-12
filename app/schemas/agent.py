@@ -17,7 +17,7 @@ from pydantic import (
     model_validator,
 )
 
-from app.schemas.common import ErrorCode, M1Schema
+from app.schemas.common import AgentProviderOutputStage, ErrorCode, M1Schema
 
 AGENT_CONTRACT_VERSION: Literal["m2-agent-contract-v1"] = "m2-agent-contract-v1"
 MAX_TASKS = 24
@@ -460,6 +460,7 @@ class SafeAgentError(M1Schema):
     message: str = Field(strict=True, min_length=1, max_length=300)
     retryable: bool
     field: str | None = Field(default=None, min_length=1, max_length=100)
+    diagnostic_stage: AgentProviderOutputStage | None = None
 
     @field_validator("message")
     @classmethod

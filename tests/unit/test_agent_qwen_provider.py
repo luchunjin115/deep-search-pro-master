@@ -43,6 +43,9 @@ from app.schemas.agent import (
 
 PLAN_ID = UUID("10000000-0000-0000-0000-000000000001")
 EVIDENCE_ID = UUID("20000000-0000-0000-0000-000000000001")
+KNOWLEDGE_EVIDENCE_ID = UUID("20000000-0000-0000-0000-000000000002")
+UNSELECTED_EVIDENCE_ID = UUID("20000000-0000-0000-0000-000000000003")
+FILE_ID = UUID("40000000-0000-0000-0000-000000000001")
 
 
 def capability(capability_id: str, kind: str) -> ResolvedCapability:
@@ -130,7 +133,9 @@ def result() -> WorkerResult:
         worker_id="business_data",
         execution_status="completed",
         business_outcome="answered",
-        business_result=BoundedJsonObject({"available_quantity": 125}),
+        business_result=BoundedJsonObject(
+            {"inventory": {"sku": "LAMP-001", "available_quantity": 125}}
+        ),
         public_summary="库存已返回。",
         observations=[observation],
         evidence_ids=[EVIDENCE_ID],
@@ -249,9 +254,90 @@ async def test_qwen_agent_supports_all_four_strict_roles_and_safe_payload() -> N
         handoff = await provider.prepare_handoff(handoff_request)
         assert handoff.target_worker == "business_data"
 
+        knowledge_text = "库存低于安全阈值时应发起补货。"
+        unselected_text = "这段只介绍包装颜色，不能支持当前补货结论。"
+        knowledge_observation = WorkerObservation(
+            observation_id=UUID("30000000-0000-0000-0000-000000000002"),
+            status="success",
+            public_summary="search_knowledge执行成功。",
+            structured_result=BoundedJsonObject(
+                {
+                    "capability_id": "search_knowledge",
+                    "data": {
+                        "supported": True,
+                        "segments": [
+                            {
+                                "evidence_id": str(KNOWLEDGE_EVIDENCE_ID),
+                                "citation_label": "[E1]",
+                                "source_type": "knowledge",
+                                "title": "补货手册",
+                                "text": knowledge_text,
+                            },
+                            {
+                                "evidence_id": str(UNSELECTED_EVIDENCE_ID),
+                                "citation_label": "[E2]",
+                                "source_type": "knowledge",
+                                "title": "包装手册",
+                                "text": unselected_text,
+                            },
+                        ],
+                    },
+                }
+            ),
+            evidence_ids=[KNOWLEDGE_EVIDENCE_ID, UNSELECTED_EVIDENCE_ID],
+            resource_usage=usage(),
+        )
+        file_text = "这段上传文件内容没有 Evidence，回答模型仍然需要看到。"
+        file_observation = WorkerObservation(
+            observation_id=UUID("30000000-0000-0000-0000-000000000003"),
+            status="success",
+            public_summary="read_uploaded_file执行成功。",
+            structured_result=BoundedJsonObject(
+                {
+                    "capability_id": "read_uploaded_file",
+                    "data": {
+                        "file_id": str(FILE_ID),
+                        "sections": [{"content": file_text}],
+                    },
+                }
+            ),
+            artifact_ids=[FILE_ID],
+            resource_usage=usage(),
+        )
+        knowledge_result = WorkerResult(
+            task_id="knowledge_task",
+            worker_id="knowledge",
+            execution_status="completed",
+            business_outcome="answered",
+            business_result=BoundedJsonObject(
+                {
+                    "knowledge_search": {
+                        "supported": True,
+                        "segments": [
+                            {
+                                "evidence_id": str(KNOWLEDGE_EVIDENCE_ID),
+                                "citation_label": "[E1]",
+                                "source_type": "knowledge",
+                                "title": "补货手册",
+                                "text": knowledge_text,
+                            }
+                        ],
+                    },
+                    "uploaded_file": {
+                        "file_id": str(FILE_ID),
+                        "sections": [{"content": file_text}],
+                    },
+                }
+            ),
+            public_summary="内部补货规则已返回。",
+            observations=[knowledge_observation, file_observation],
+            evidence_ids=[KNOWLEDGE_EVIDENCE_ID, UNSELECTED_EVIDENCE_ID],
+            artifact_ids=[FILE_ID],
+            resource_usage=usage(),
+        )
         answer_request = AnswerRequest(
             goal=plan().goal,
-            worker_results=(result(),),
+            worker_results=(result(), knowledge_result),
         )
         answer = await provider.compose_answer(answer_request)
         assert isinstance(answer, AgentAnswer)
@@ -270,6 +356,12 @@ async def test_qwen_agent_supports_all_four_strict_roles_and_safe_payload() -> N
         assert response_format["type"] == "json_schema"
         assert response_format["json_schema"]["strict"] is True  # type: ignore[index]
 
+    decision_payload = captured[1]
+    assert "exact_quote" not in decision_payload["messages"][0]["content"]  # type: ignore[index]
+    assert "evidence_supports" not in json.dumps(
+        decision_payload["response_format"], ensure_ascii=False
+    )
+
     serialized = json.dumps(captured, ensure_ascii=False)
     for forbidden in (
         "agent-test-key",
@@ -284,26 +376,47 @@ async def test_qwen_agent_supports_all_four_strict_roles_and_safe_payload() -> N
 
     answer_input = json.loads(captured[3]["messages"][1]["content"])  # type: ignore[index]
     assert "observations" not in answer_input["worker_results"][0]
+    assert answer_input["worker_results"][0]["business_result"] is None
+    assert answer_input["worker_results"][1]["business_result"] == {
+        "uploaded_file": {
+            "file_id": str(FILE_ID),
+            "sections": [{"content": file_text}],
+        }
+    }
     assert answer_input["answer_evidence"]["items"][0]["citation_label"] == "[E1]"
     assert answer_input["answer_evidence"]["items"][0]["evidence_id"] == str(
         EVIDENCE_ID
     )
+    assert answer_input["answer_evidence"]["items"][1]["supporting_data"]["text"] == (
+        knowledge_text
+    )
+    assert answer_input["answer_evidence"]["items"][2]["supporting_data"]["text"] == (
+        unselected_text
+    )
+    assert json.dumps(answer_input, ensure_ascii=False).count(knowledge_text) == 1
+    assert json.dumps(answer_input, ensure_ascii=False).count(unselected_text) == 1
+    assert json.dumps(answer_input, ensure_ascii=False).count(file_text) == 1
+    assert provider.provider_name == "qwen"
+    assert provider.api_dialect == "chat_completions"
+    assert provider.model_name == "qwen3.8-max"
+    assert len(provider.prompt_bundle_sha256) == 64
+    answer_prompt = captured[3]["messages"][0]["content"]  # type: ignore[index]
+    for behavior in (
+        "单条直接证据",
+        "多条候选只引用支持项",
+        "非空候选均不支持",
+        "部分问题有证据",
+    ):
+        assert behavior in answer_prompt
 
 
 @pytest.mark.asyncio
-async def test_qwen_answer_rejects_extra_fields_and_forged_labels() -> None:
-    outputs = iter(
-        [
-            {
-                "action": {
-                    "type": "finish",
-                    "public_summary": "伪造引用 [E2]。",
-                    "business_outcome": "answered",
-                    "citation_labels": ["[E2]"],
-                    "artifact_ids": [],
-                    "tenant_id": "attacker",
-                }
-            },
+@pytest.mark.parametrize(
+    ("first_output", "expected_stage"),
+    [
+        ("private-not-json tenant_id=hidden", "model_json"),
+        ({}, "model_schema"),
+        (
             {
                 "action": {
                     "type": "finish",
@@ -313,13 +426,45 @@ async def test_qwen_answer_rejects_extra_fields_and_forged_labels() -> None:
                     "artifact_ids": [],
                 }
             },
-        ]
-    )
+            "evidence_reference_contract",
+        ),
+        (
+            {
+                "action": {
+                    "type": "finish",
+                    "public_summary": "有结论但正文遗漏引用。",
+                    "business_outcome": "answered",
+                    "citation_labels": ["[E1]"],
+                    "artifact_ids": [],
+                }
+            },
+            "citation_contract",
+        ),
+    ],
+)
+async def test_qwen_answer_repairs_only_whitelisted_output_once(
+    first_output: object,
+    expected_stage: str,
+) -> None:
+    valid = {
+        "action": {
+            "type": "finish",
+            "public_summary": "德国仓库存为125件 [E1]。",
+            "business_outcome": "answered",
+            "citation_labels": ["[E1]"],
+            "artifact_ids": [],
+        }
+    }
+    outputs = iter((first_output, valid))
+    captured_requests: list[dict[str, object]] = []
 
-    async def handler(_request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(json.loads(request.content))
+        output = next(outputs)
+        content = output if isinstance(output, str) else json.dumps(output)
         return httpx.Response(
             200,
-            json={"choices": [{"message": {"content": json.dumps(next(outputs))}}]},
+            json={"choices": [{"message": {"content": content}}]},
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -331,11 +476,159 @@ async def test_qwen_answer_rejects_extra_fields_and_forged_labels() -> None:
             max_output_tokens=4096,
             http_client=client,
         )
-        for _ in range(2):
-            with pytest.raises(AgentProviderOutputError):
-                await provider.compose_answer(
-                    AnswerRequest(goal="查询库存", worker_results=(result(),))
-                )
+        answer = await provider.compose_answer(
+            AnswerRequest(goal="查询库存", worker_results=(result(),))
+        )
+
+    assert answer.action.evidence_ids == [EVIDENCE_ID]  # type: ignore[union-attr]
+    assert len(captured_requests) == 2
+    first, repair = captured_requests
+    assert first["messages"][1] == repair["messages"][1]  # type: ignore[index]
+    assert first["response_format"] == repair["response_format"]
+    repair_prompt = repair["messages"][0]["content"]  # type: ignore[index]
+    assert expected_stage in repair_prompt
+    assert "[E1]" in repair_prompt
+    serialized_repair = json.dumps(repair, ensure_ascii=False)
+    for forbidden in (
+        "private-not-json",
+        "tenant_id=hidden",
+        "Traceback",
+        "storage_key",
+        "budget_ref",
+    ):
+        assert forbidden not in serialized_repair
+
+
+@pytest.mark.asyncio
+async def test_qwen_answer_stops_after_second_repairable_failure() -> None:
+    outputs = iter(("not-json", {}))
+    calls = 0
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        output = next(outputs)
+        content = output if isinstance(output, str) else json.dumps(output)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": content}}]},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = QwenAgentProvider(
+            api_key=SecretStr("secret"),
+            model="qwen3.8-max",
+            base_url="https://qwen.example/v1",
+            timeout_seconds=5,
+            max_output_tokens=4096,
+            http_client=client,
+        )
+        with pytest.raises(AgentProviderOutputError) as captured:
+            await provider.compose_answer(
+                AnswerRequest(goal="查询库存", worker_results=(result(),))
+            )
+
+    assert captured.value.stage == "model_schema"
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_qwen_answer_does_not_retry_provider_or_input_failures() -> None:
+    calls = 0
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"choices": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = QwenAgentProvider(
+            api_key=SecretStr("secret"),
+            model="qwen3.8-max",
+            base_url="https://qwen.example/v1",
+            timeout_seconds=5,
+            max_output_tokens=4096,
+            http_client=client,
+        )
+        with pytest.raises(AgentProviderOutputError) as envelope:
+            await provider.compose_answer(
+                AnswerRequest(goal="查询库存", worker_results=(result(),))
+            )
+        assert envelope.value.stage == "provider_envelope"
+
+        orphan = result().model_copy(
+            update={"evidence_ids": [EVIDENCE_ID, UNSELECTED_EVIDENCE_ID]}
+        )
+        with pytest.raises(AgentProviderOutputError) as invalid_input:
+            await provider.compose_answer(
+                AnswerRequest(goal="查询库存", worker_results=(orphan,))
+            )
+        assert invalid_input.value.stage == "answer_input_contract"
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [401, 402, 429, 503, "network", "timeout"])
+async def test_qwen_answer_does_not_retry_transport_failures(
+    failure: int | str,
+) -> None:
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if failure == "network":
+            raise httpx.ConnectError("private network detail", request=request)
+        if failure == "timeout":
+            raise httpx.ReadTimeout("private timeout detail", request=request)
+        assert isinstance(failure, int)
+        return httpx.Response(failure, text="private provider response")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = QwenAgentProvider(
+            api_key=SecretStr("secret"),
+            model="qwen3.8-max",
+            base_url="https://qwen.example/v1",
+            timeout_seconds=5,
+            max_output_tokens=4096,
+            http_client=client,
+        )
+        expected = (
+            ProviderTimeoutError if failure == "timeout" else ProviderUnavailableError
+        )
+        with pytest.raises(expected):
+            await provider.compose_answer(
+                AnswerRequest(goal="查询库存", worker_results=(result(),))
+            )
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_qwen_classifies_non_json_model_text() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "private-not-json"}}]},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = QwenAgentProvider(
+            api_key=SecretStr("secret"),
+            model="qwen3.8-max",
+            base_url="https://qwen.example/v1",
+            timeout_seconds=5,
+            max_output_tokens=4096,
+            http_client=client,
+        )
+        with pytest.raises(AgentProviderOutputError) as captured:
+            await provider.create_plan(
+                PlannerRequest(goal=plan().goal, available_workers=(profile(),))
+            )
+
+    assert captured.value.stage == "model_json"
+    assert "private-not-json" not in str(captured.value)
 
 
 @pytest.mark.asyncio

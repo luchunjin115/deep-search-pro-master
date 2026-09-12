@@ -1,5 +1,6 @@
 """M1 Tool proposal providers and engineered Agent provider boundaries."""
 
+from app.llm.agent_deepseek import DeepSeekAgentProvider
 from app.llm.agent_factory import create_engineered_agent_provider
 from app.llm.agent_mock import DeterministicAgentMock
 from app.llm.agent_provider import EngineeredAgentProvider
@@ -16,6 +17,7 @@ from app.llm.schemas import (
 )
 
 __all__ = [
+    "DeepSeekAgentProvider",
     "DeterministicAgentMock",
     "EngineeredAgentProvider",
     "GetProductSpecToolCall",

@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from app.core.errors import RerankerInputError, RerankerProviderError
+from app.core.rag_trace import record_rag_stage
 from app.schemas.auth import CurrentUser
 from app.schemas.retrieval import (
     RerankedRetrievalResponse,
@@ -72,12 +73,15 @@ class RerankerRetrievalService:
         except (TypeError, ValueError, ValidationError):
             raise RetrievalInternalError from None
 
+        record_rag_stage("retrieval", validated_hybrid)
         if not validated_hybrid.results:
-            return _empty_response(
+            response = _empty_response(
                 validated_hybrid,
                 public_identity=public_identity,
                 top_k=self._top_k,
             )
+            record_rag_stage("reranked", response)
+            return response
 
         passages = tuple(result.body_text for result in validated_hybrid.results)
         try:
@@ -94,7 +98,7 @@ class RerankerRetrievalService:
             raise RetrievalRerankerProviderUnavailableError from None
 
         try:
-            return _reranked_response(
+            response = _reranked_response(
                 validated_hybrid,
                 batch=batch,
                 public_identity=public_identity,
@@ -102,6 +106,8 @@ class RerankerRetrievalService:
             )
         except (TypeError, ValueError, ValidationError):
             raise RetrievalInternalError from None
+        record_rag_stage("reranked", response)
+        return response
 
 
 def _validated_hybrid_response(response: object) -> RetrievalResponse:

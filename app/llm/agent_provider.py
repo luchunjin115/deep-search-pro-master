@@ -203,4 +203,4 @@ class EngineeredAgentProvider(
     AgentAnswerProvider,
     Protocol,
 ):
-    """Composite protocol implemented by deterministic Mock and future Qwen."""
+    """Composite protocol implemented by Mock, Qwen, and DeepSeek providers."""

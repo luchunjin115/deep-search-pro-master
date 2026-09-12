@@ -36,6 +36,24 @@ ErrorCode = Literal[
     "PROVIDER_ERROR",
     "INTERNAL_ERROR",
 ]
+AgentProviderOutputStage = Literal[
+    "provider_envelope",
+    "model_json",
+    "model_schema",
+    "answer_input_contract",
+    "evidence_reference_contract",
+    "citation_contract",
+    "unknown_output_contract",
+]
+AGENT_PROVIDER_OUTPUT_STAGES: tuple[AgentProviderOutputStage, ...] = (
+    "provider_envelope",
+    "model_json",
+    "model_schema",
+    "answer_input_contract",
+    "evidence_reference_contract",
+    "citation_contract",
+    "unknown_output_contract",
+)
 MarketCode = Literal["DE", "FR"]
 RoleName = Literal["company_owner", "product_scout", "amazon_operator"]
 ToolName = Literal[

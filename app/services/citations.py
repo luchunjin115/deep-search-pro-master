@@ -35,7 +35,7 @@ class CitationEvidenceReader(Protocol):
 
 
 class CitationValidatorService:
-    """Reject absent, malformed, duplicate, stale, or foreign Context citations."""
+    """Validate Context citations and list each source once in first-use order."""
 
     def __init__(self, repository: CitationEvidenceReader) -> None:
         self._repository = repository
@@ -97,6 +97,4 @@ def _extract_strict_labels(answer: str) -> list[str]:
     ):
         raise CitationValidationError
     labels = [match.group(0) for match in _VALID_CITATION_PATTERN.finditer(answer)]
-    if len(labels) != len(set(labels)):
-        raise CitationValidationError
-    return labels
+    return list(dict.fromkeys(labels))

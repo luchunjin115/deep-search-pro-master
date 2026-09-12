@@ -6,13 +6,14 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from app.capabilities.contracts import (
     CapabilityParameterSchema,
     CapabilityResolution,
     ResolvedCapability,
 )
+from app.core.config import Settings
 from app.core.errors import AgentProviderOutputError
 from app.llm.agent_mock import (
     AgentMockScript,
@@ -300,6 +301,19 @@ def test_agent_provider_protocols_are_replaceable_and_mock_satisfies_all() -> No
     assert isinstance(mock, AgentHandoffProvider)
     assert isinstance(mock, AgentAnswerProvider)
     assert isinstance(mock, EngineeredAgentProvider)
+
+
+def test_deepseek_provider_selection_requires_its_own_api_key() -> None:
+    with pytest.raises(ValidationError, match="DEEPSEEK_API_KEY"):
+        Settings(_env_file=None, llm_provider="deepseek")  # type: ignore[call-arg]
+
+    settings = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        llm_provider="deepseek",
+        deepseek_api_key=SecretStr("deepseek-test-key"),
+    )
+
+    assert settings.llm_provider == "deepseek"
 
 
 def test_plan_validation_rejects_goal_capability_or_worker_forgery() -> None:

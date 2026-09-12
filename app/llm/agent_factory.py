@@ -1,4 +1,4 @@
-"""Configuration factory for deterministic and Qwen engineered Agent providers."""
+"""Configuration factory for deterministic and remote Agent providers."""
 
 from __future__ import annotations
 
@@ -22,15 +22,29 @@ def create_engineered_agent_provider(
             raise ValueError("Mock Agent provider requires an explicit bounded script")
         return DeterministicAgentMock(mock_script)
 
-    from app.llm.agent_qwen import QwenAgentProvider
+    if settings.llm_provider == "qwen":
+        from app.llm.agent_qwen import QwenAgentProvider
 
-    if settings.qwen_api_key is None:
-        raise ValueError("Qwen settings require an API key")
-    return QwenAgentProvider(
-        api_key=settings.qwen_api_key,
-        model=settings.qwen_model,
-        base_url=settings.qwen_base_url,
-        timeout_seconds=settings.qwen_timeout_seconds,
-        max_output_tokens=settings.qwen_agent_max_output_tokens,
+        if settings.qwen_api_key is None:
+            raise ValueError("Qwen settings require an API key")
+        return QwenAgentProvider(
+            api_key=settings.qwen_api_key,
+            model=settings.qwen_model,
+            base_url=settings.qwen_base_url,
+            timeout_seconds=settings.qwen_timeout_seconds,
+            max_output_tokens=settings.qwen_agent_max_output_tokens,
+            http_client=http_client,
+        )
+
+    from app.llm.agent_deepseek import DeepSeekAgentProvider
+
+    if settings.deepseek_api_key is None:
+        raise ValueError("DeepSeek settings require an API key")
+    return DeepSeekAgentProvider(
+        api_key=settings.deepseek_api_key,
+        model=settings.deepseek_model,
+        base_url=settings.deepseek_base_url,
+        timeout_seconds=settings.deepseek_timeout_seconds,
+        max_output_tokens=settings.deepseek_agent_max_output_tokens,
         http_client=http_client,
     )

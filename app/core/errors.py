@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID
 
-from app.schemas.common import ErrorCode, ErrorDetail
+from app.schemas.common import (
+    AGENT_PROVIDER_OUTPUT_STAGES,
+    AgentProviderOutputStage,
+    ErrorCode,
+    ErrorDetail,
+)
 
 
 class ApplicationError(Exception):
@@ -718,6 +723,8 @@ ProviderErrorReason = Literal[
     "invalid_output",
 ]
 
+_AGENT_PROVIDER_OUTPUT_STOP_PREFIX = "invalid_agent_output:"
+
 
 class ProviderError(ApplicationError):
     """A safe boundary error for Mock/Qwen Tool-proposal failures."""
@@ -785,9 +792,44 @@ class ProviderOutputError(ProviderError):
 class AgentProviderOutputError(ProviderError):
     """An Agent model response failed its strict structured contract."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        stage: AgentProviderOutputStage = "unknown_output_contract",
+    ) -> None:
+        self.stage: AgentProviderOutputStage = (
+            stage
+            if stage in AGENT_PROVIDER_OUTPUT_STAGES
+            else "unknown_output_contract"
+        )
         super().__init__(
             "invalid_output",
             "模型返回的Agent结构化结果无效",
             retryable=False,
         )
+
+    @property
+    def stop_reason(self) -> str:
+        """Return a bounded diagnostic that is safe to persist."""
+
+        return agent_provider_output_stop_reason(self.stage)
+
+
+def agent_provider_output_stop_reason(stage: AgentProviderOutputStage) -> str:
+    """Encode one known stage for the existing bounded checkpoint field."""
+
+    return f"{_AGENT_PROVIDER_OUTPUT_STOP_PREFIX}{stage}"
+
+
+def agent_provider_output_stage_from_stop_reason(
+    stop_reason: object,
+) -> AgentProviderOutputStage | None:
+    """Accept only a known persisted stage and discard every other value."""
+
+    if not isinstance(stop_reason, str) or not stop_reason.startswith(
+        _AGENT_PROVIDER_OUTPUT_STOP_PREFIX
+    ):
+        return None
+    stage = stop_reason.removeprefix(_AGENT_PROVIDER_OUTPUT_STOP_PREFIX)
+    if stage not in AGENT_PROVIDER_OUTPUT_STAGES:
+        return None
+    return cast(AgentProviderOutputStage, stage)

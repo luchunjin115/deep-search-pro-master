@@ -58,7 +58,7 @@ def test_valid_subset_maps_labels_to_database_evidence_in_answer_order() -> None
     result = CitationValidatorService(reader).validate_answer(
         user,
         context_id,
-        "先看限制 [E3]，再看基础规则 [E1]。",
+        "先看限制 [E3]，再看基础规则 [E1]，再次说明限制 [E3]。",
     )
 
     assert result.context_id == context_id
@@ -73,7 +73,6 @@ def test_valid_subset_maps_labels_to_database_evidence_in_answer_order() -> None
     "answer",
     (
         "没有引用",
-        "重复引用 [E1] 和 [E1]",
         "越界引用 [E0]",
         "越界引用 [E13]",
         "编造引用 [E99]",
@@ -83,7 +82,7 @@ def test_valid_subset_maps_labels_to_database_evidence_in_answer_order() -> None
         "缺少右括号 [E1",
     ),
 )
-def test_supported_context_rejects_missing_duplicate_or_malformed_labels(
+def test_supported_context_rejects_missing_or_malformed_labels(
     answer: str,
 ) -> None:
     context_id = uuid4()

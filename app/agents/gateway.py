@@ -40,6 +40,7 @@ from app.core.errors import (
     ApplicationError,
     ProviderTimeoutError,
 )
+from app.core.rag_trace import record_rag_stage
 from app.llm.agent_provider import EngineeredAgentProvider
 from app.llm.agent_schemas import (
     AgentAnswer,
@@ -373,6 +374,7 @@ class AgentGateway:
             state,
             expected_checkpoint_version=checkpoint_version,
         )
+        record_rag_stage("resource_usage", state.resource_usage)
 
         if state.execution_status not in {"completed", "waiting_user"} or (
             state.business_outcome == "denied"
@@ -748,6 +750,11 @@ class _PlanPersistenceProvider:
         self._thread_id = thread_id
         self._root_run_id = root_run_id
         self._replace_plan = replace_plan
+
+    @property
+    def last_answer_model_calls(self) -> int:
+        value = getattr(self._provider, "last_answer_model_calls", 1)
+        return value if isinstance(value, int) else 1
 
     async def create_plan(self, request: PlannerRequest) -> TaskPlan:
         plan = await self._provider.create_plan(request)

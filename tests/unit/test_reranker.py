@@ -8,6 +8,7 @@ from uuid import UUID
 import pytest
 
 from app.core.errors import RerankerProviderError
+from app.core.rag_trace import RagReviewTrace, rag_review_trace
 from app.schemas.auth import CurrentUser
 from app.schemas.retrieval import (
     DenseRetrievalScore,
@@ -179,7 +180,11 @@ def test_reranker_calls_trusted_hybrid_then_reorders_without_changing_facts() ->
     service = RerankerRetrievalService(hybrid, provider, top_k=8)
     request = RetrievalRequest(query="哪段最相关？")
 
-    response = service.retrieve(_USER, request)
+    trace = RagReviewTrace()
+    with rag_review_trace(trace):
+        response = service.retrieve(_USER, request)
+    assert trace.retrieval == hybrid_response.model_dump(mode="json")
+    assert trace.reranked == response.model_dump(mode="json")
 
     assert hybrid.calls == [(_USER, request)]
     assert provider.calls == [

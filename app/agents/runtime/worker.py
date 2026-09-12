@@ -18,7 +18,11 @@ from app.agents.runtime.contracts import (
 )
 from app.agents.runtime.dispatcher import WorkerDispatcher
 from app.agents.runtime.termination import WorkerTerminationManager
-from app.core.errors import ApplicationError, BudgetExceededError
+from app.core.errors import (
+    AgentProviderOutputError,
+    ApplicationError,
+    BudgetExceededError,
+)
 from app.llm.agent_schemas import HandoffDraft
 from app.runtime.budget import (
     AgentBudgetTree,
@@ -277,6 +281,9 @@ def _failure_result(
                 message=error.message,
                 retryable=error.retryable,
                 field=error.field,
+                diagnostic_stage=(
+                    error.stage if isinstance(error, AgentProviderOutputError) else None
+                ),
             )
         ],
         resource_usage=_resource_usage(usage),

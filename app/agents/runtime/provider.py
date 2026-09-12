@@ -11,6 +11,7 @@ from app.llm.agent_schemas import (
     HandoffRequest,
     PlannerRequest,
 )
+from app.llm.agent_structured import answer_repair_call_budget
 from app.runtime.budget import AgentBudgetTree
 from app.schemas.agent import AgentDecision, TaskPlan
 
@@ -26,6 +27,11 @@ class BudgetedAgentProvider:
     ) -> None:
         self._provider = provider
         self._budget = budget
+        self._last_answer_model_calls = 0
+
+    @property
+    def last_answer_model_calls(self) -> int:
+        return self._last_answer_model_calls
 
     async def create_plan(self, request: PlannerRequest) -> TaskPlan:
         self._budget.reserve_root_model_call()
@@ -40,5 +46,13 @@ class BudgetedAgentProvider:
         return await self._provider.prepare_handoff(request)
 
     async def compose_answer(self, request: AnswerRequest) -> AgentAnswer:
+        self._last_answer_model_calls = 0
         self._budget.reserve_root_model_call()
-        return await self._provider.compose_answer(request)
+        self._last_answer_model_calls = 1
+
+        def reserve_repair() -> None:
+            self._budget.reserve_root_model_call()
+            self._last_answer_model_calls += 1
+
+        with answer_repair_call_budget(reserve_repair):
+            return await self._provider.compose_answer(request)

@@ -23,6 +23,7 @@ from app.capabilities.contracts import (
     CapabilityResolution,
     ResolvedCapability,
 )
+from app.core.errors import AgentProviderOutputError
 from app.llm.agent_mock import AgentMockScript, DeterministicAgentMock
 from app.llm.agent_provider import EngineeredAgentProvider
 from app.llm.agent_schemas import (
@@ -258,6 +259,17 @@ def failed_result(task_id: str, worker_id: str) -> WorkerResult:
     )
 
 
+def unsupported_result(task_id: str, worker_id: str) -> WorkerResult:
+    return WorkerResult(
+        task_id=task_id,
+        worker_id=worker_id,
+        execution_status="completed",
+        business_outcome="unsupported",
+        public_summary="当前授权范围内未找到可支持回答的证据。",
+        resource_usage=zero_usage(),
+    )
+
+
 def handoff_for(task_id: str, goal: str, worker_id: str) -> HandoffDraft:
     return HandoffDraft(
         task_id=task_id,
@@ -360,6 +372,12 @@ class RecordingProvider:
         return await self._mock.compose_answer(item)
 
 
+class InvalidAnswerProvider(RecordingProvider):
+    async def compose_answer(self, item: AnswerRequest) -> AgentAnswer:
+        self.answer_requests.append(item)
+        raise AgentProviderOutputError("citation_contract")
+
+
 @pytest.fixture
 def workers() -> tuple[WorkerCapabilityProfile, WorkerCapabilityProfile]:
     return (
@@ -399,6 +417,52 @@ async def test_l0_uses_answer_provider_directly_without_worker(
     assert provider.decision_requests == []
     assert len(provider.answer_requests) == 1
     assert worker.received_handoffs == []
+
+
+@pytest.mark.asyncio
+async def test_answer_resource_usage_counts_a_single_repair_call(
+    workers: tuple[WorkerCapabilityProfile, WorkerCapabilityProfile],
+) -> None:
+    goal = "解释什么是安全库存"
+    provider = RecordingProvider(
+        AgentMockScript(
+            plans=(direct_plan(goal),),
+            answers=(
+                AgentAnswer(
+                    action=FinishAction(
+                        public_summary="安全库存用于吸收不确定性。",
+                        business_outcome="answered",
+                    )
+                ),
+            ),
+        )
+    )
+    provider.last_answer_model_calls = 2
+
+    result = await SupervisorAgent(
+        provider=provider,
+        worker=ScriptedFakeWorker([]),
+    ).run(request(goal, workers=workers))
+
+    assert result.resource_usage.model_calls == 3
+
+
+@pytest.mark.asyncio
+async def test_graph_retains_only_safe_answer_failure_stage(
+    workers: tuple[WorkerCapabilityProfile, WorkerCapabilityProfile],
+) -> None:
+    goal = "解释什么是安全库存"
+    provider = InvalidAnswerProvider(AgentMockScript(plans=(direct_plan(goal),)))
+
+    result = await SupervisorAgent(
+        provider=provider,
+        worker=ScriptedFakeWorker([]),
+    ).run(request(goal, workers=workers))
+
+    assert result.execution_status == "failed"
+    assert result.business_outcome == "system_error"
+    assert result.stop_reason == "invalid_agent_output:citation_contract"
+    assert "private" not in result.model_dump_json().casefold()
 
 
 @pytest.mark.asyncio
@@ -450,6 +514,99 @@ async def test_l1_handoff_observation_reaches_answer_before_finish(
         {"handoff_id", "allocated_budget_ref"}
     )
     assert provider.answer_requests[0].worker_results[0].observations == [item]
+
+
+@pytest.mark.asyncio
+async def test_graph_retains_safe_worker_output_failure_stage(
+    workers: tuple[WorkerCapabilityProfile, WorkerCapabilityProfile],
+) -> None:
+    goal = "查询德国库存"
+    provider = RecordingProvider(
+        AgentMockScript(
+            plans=(one_worker_plan(goal),),
+            decisions=(
+                AgentDecision(
+                    action=DelegateTaskAction(
+                        task_id="inventory",
+                        target_worker="business_data",
+                    )
+                ),
+            ),
+            handoffs=(handoff_for("inventory", goal, "business_data"),),
+        )
+    )
+    failed = WorkerResult.model_validate(
+        failed_result("inventory", "business_data").model_dump(mode="json")
+        | {
+            "safe_errors": [
+                {
+                    "code": "PROVIDER_ERROR",
+                    "message": "模型返回的Agent结构化结果无效",
+                    "retryable": False,
+                    "field": "message",
+                    "diagnostic_stage": "model_schema",
+                }
+            ],
+        }
+    )
+
+    result = await SupervisorAgent(
+        provider=provider,
+        worker=ScriptedFakeWorker([failed]),
+    ).run(request(goal, workers=workers))
+
+    assert result.execution_status == "failed"
+    assert result.stop_reason == "invalid_agent_output:model_schema"
+
+
+@pytest.mark.asyncio
+async def test_graph_rejects_worker_that_drops_observed_evidence_before_answer(
+    workers: tuple[WorkerCapabilityProfile, WorkerCapabilityProfile],
+) -> None:
+    goal = "查询德国库存"
+    first = observation(
+        BUSINESS_OBSERVATION_ID,
+        BUSINESS_EVIDENCE_ID,
+        "德国仓可售库存为125件。",
+    )
+    second = observation(
+        KNOWLEDGE_OBSERVATION_ID,
+        KNOWLEDGE_EVIDENCE_ID,
+        "德国仓在途库存为40件。",
+    )
+    provider = RecordingProvider(
+        AgentMockScript(
+            plans=(one_worker_plan(goal),),
+            decisions=(
+                AgentDecision(
+                    action=DelegateTaskAction(
+                        task_id="inventory",
+                        target_worker="business_data",
+                    )
+                ),
+            ),
+            handoffs=(handoff_for("inventory", goal, "business_data"),),
+        )
+    )
+    incomplete = WorkerResult(
+        task_id="inventory",
+        worker_id="business_data",
+        execution_status="completed",
+        business_outcome="answered",
+        public_summary="只上交了第一条候选。",
+        observations=[first, second],
+        evidence_ids=[BUSINESS_EVIDENCE_ID],
+        resource_usage=zero_usage(),
+    )
+
+    result = await SupervisorAgent(
+        provider=provider,
+        worker=ScriptedFakeWorker([incomplete]),
+    ).run(request(goal, workers=workers))
+
+    assert result.execution_status == "failed"
+    assert result.stop_reason == "worker_failure"
+    assert provider.answer_requests == []
 
 
 @pytest.mark.asyncio
@@ -828,6 +985,116 @@ async def test_no_capability_path_returns_explicit_unsupported() -> None:
     assert result.business_outcome == "unsupported"
     assert result.stop_reason == "unsupported"
     assert result.worker_results == []
+
+
+@pytest.mark.asyncio
+async def test_zero_supported_worker_results_skip_answer_provider(
+    workers: tuple[WorkerCapabilityProfile, WorkerCapabilityProfile],
+) -> None:
+    goal = "查询知识库中不存在的退货规则"
+    knowledge_plan = TaskPlan(
+        plan_id=PLAN_ID,
+        goal=goal,
+        tasks=[
+            task(
+                "policy",
+                goal,
+                worker_id="knowledge",
+                capability_id="search_knowledge",
+            ).model_copy(
+                update={
+                    "evidence_requirement": EvidenceRequirement(
+                        required=True,
+                        minimum_count=1,
+                        source_types=["document"],
+                    )
+                }
+            )
+        ],
+    )
+    provider = RecordingProvider(
+        AgentMockScript(
+            plans=(knowledge_plan,),
+            decisions=(
+                AgentDecision(
+                    action=DelegateTaskAction(
+                        task_id="policy",
+                        target_worker="knowledge",
+                    )
+                ),
+            ),
+            handoffs=(handoff_for("policy", goal, "knowledge"),),
+        )
+    )
+
+    result = await SupervisorAgent(
+        provider=provider,
+        worker=ScriptedFakeWorker([unsupported_result("policy", "knowledge")]),
+    ).run(request(goal, workers=workers))
+
+    assert result.execution_status == "completed"
+    assert result.business_outcome == "unsupported"
+    assert result.public_summary == "当前授权范围内未找到可支持回答的证据。"
+    assert provider.answer_requests == []
+
+
+@pytest.mark.asyncio
+async def test_supported_sibling_still_allows_partial_answer_composition(
+    workers: tuple[WorkerCapabilityProfile, WorkerCapabilityProfile],
+) -> None:
+    goal = "查询库存并结合不存在的政策判断"
+    inventory_item = observation(
+        BUSINESS_OBSERVATION_ID,
+        BUSINESS_EVIDENCE_ID,
+        "德国仓可售库存为125件。",
+    )
+    provider = RecordingProvider(
+        AgentMockScript(
+            plans=(two_worker_plan(goal),),
+            decisions=(
+                AgentDecision(
+                    action=DelegateTaskAction(
+                        task_id="inventory",
+                        target_worker="business_data",
+                    )
+                ),
+                AgentDecision(
+                    action=DelegateTaskAction(
+                        task_id="policy",
+                        target_worker="knowledge",
+                    )
+                ),
+            ),
+            handoffs=(
+                handoff_for("inventory", "查询德国库存", "business_data"),
+                handoff_for("policy", "读取安全库存政策", "knowledge"),
+            ),
+            answers=(
+                AgentAnswer(
+                    action=FinishAction(
+                        public_summary="库存为125件 [E1]，但未找到政策证据。",
+                        business_outcome="partial",
+                        evidence_ids=[BUSINESS_EVIDENCE_ID],
+                    )
+                ),
+            ),
+        )
+    )
+
+    result = await SupervisorAgent(
+        provider=provider,
+        worker=ScriptedFakeWorker(
+            [
+                completed_result("inventory", "business_data", inventory_item),
+                unsupported_result("policy", "knowledge"),
+            ]
+        ),
+    ).run(request(goal, workers=workers))
+
+    assert result.execution_status == "completed"
+    assert result.business_outcome == "partial"
+    assert result.evidence_ids == [BUSINESS_EVIDENCE_ID]
+    assert len(provider.answer_requests) == 1
 
 
 @pytest.mark.asyncio

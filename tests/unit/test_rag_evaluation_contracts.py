@@ -647,6 +647,16 @@ def test_framework_and_judge_failures_cannot_be_recorded_as_zero_scores() -> Non
                 failure_summary="Safe bounded failure",
             )
 
+    network_failure = RagasMetricResult(
+        metric_name="faithfulness",
+        status="judge_failed",
+        value=None,
+        direction="higher_is_better",
+        failure_category="network_error",
+        failure_summary="The semantic Judge network request failed",
+    )
+    assert network_failure.failure_category == "network_error"
+
 
 @pytest.mark.parametrize(
     "payload",

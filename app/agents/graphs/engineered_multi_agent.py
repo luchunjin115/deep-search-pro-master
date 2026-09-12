@@ -17,6 +17,10 @@ from app.agents.supervisor import (
     WorkerInvoker,
 )
 from app.capabilities.contracts import CapabilityResolution
+from app.core.errors import (
+    AgentProviderOutputError,
+    agent_provider_output_stop_reason,
+)
 from app.llm.agent_evidence import validate_answer_citations
 from app.llm.agent_provider import EngineeredAgentProvider
 from app.llm.agent_schemas import (
@@ -238,6 +242,13 @@ def build_engineered_multi_agent_graph(
                 )
             )
             _validate_supervisor_plan(task_plan, request)
+        except AgentProviderOutputError as error:
+            return _failure_update(
+                state,
+                history=history,
+                usage=usage,
+                stop_reason=error.stop_reason,
+            )
         except Exception:  # noqa: BLE001 - provider details stay behind this boundary
             return _failure_update(
                 state,
@@ -298,6 +309,13 @@ def build_engineered_multi_agent_graph(
                     task_id,
                     state["plan"],
                     state["request"],
+                )
+            except AgentProviderOutputError as error:
+                return _failure_update(
+                    state,
+                    history=history,
+                    usage=usage,
+                    stop_reason=error.stop_reason,
                 )
             except Exception:  # noqa: BLE001 - provider details stay private
                 return _failure_update(
@@ -383,6 +401,13 @@ def build_engineered_multi_agent_graph(
                     or draft.target_worker != action.target_worker
                 ):
                     raise ValueError("Handoff draft changed delegation identity")
+            except AgentProviderOutputError as error:
+                return _failure_update(
+                    state,
+                    history=history,
+                    usage=usage,
+                    stop_reason=error.stop_reason,
+                )
             except Exception:  # noqa: BLE001 - provider details stay private
                 return _failure_update(
                     state,
@@ -415,11 +440,23 @@ def build_engineered_multi_agent_graph(
                 *(worker.invoke(draft) for draft in drafts),
                 return_exceptions=True,
             )
-            if any(isinstance(item, BaseException) for item in batch_results):
+            failure = next(
+                (item for item in batch_results if isinstance(item, BaseException)),
+                None,
+            )
+            if failure is not None:
+                if isinstance(failure, AgentProviderOutputError):
+                    raise failure
                 raise RuntimeError("Worker batch failed")
             invoked = [cast(WorkerResult, item) for item in batch_results]
             for draft, result in zip(drafts, invoked, strict=True):
                 _validate_worker_result(result, draft, state["plan"])
+        except AgentProviderOutputError as error:
+            return _failure_update(
+                state,
+                history=history,
+                stop_reason=error.stop_reason,
+            )
         except Exception:  # noqa: BLE001 - Fake Worker details must stay private
             return _failure_update(
                 state,
@@ -489,13 +526,25 @@ def build_engineered_multi_agent_graph(
             None,
         )
         if failed is not None and not _can_compose_partial(plan_with_status, results):
+            diagnostic_stage = next(
+                (
+                    error.diagnostic_stage
+                    for error in failed.safe_errors
+                    if error.diagnostic_stage is not None
+                ),
+                None,
+            )
             return update | {
                 "execution_status": "failed",
                 "business_outcome": failed.business_outcome,
                 "current_task_id": None,
                 "current_task_ids": [],
                 "public_summary": failed.public_summary,
-                "stop_reason": "worker_failure",
+                "stop_reason": (
+                    agent_provider_output_stop_reason(diagnostic_stage)
+                    if diagnostic_stage is not None
+                    else "worker_failure"
+                ),
             }
         if active_results:
             return update
@@ -507,7 +556,14 @@ def build_engineered_multi_agent_graph(
 
     async def compose_answer(state: SupervisorGraphState) -> SupervisorGraphState:
         history = _append_history(state, "compose_answer")
-        usage = _add_usage(state["resource_usage"], model_calls=1)
+        refusal = _worker_evidence_refusal(state["worker_results"])
+        if refusal is not None:
+            return _terminal_action_update(
+                state["plan"],
+                state.get("current_task_id"),
+                refusal,
+            ) | {"node_history": history}
+        usage = state["resource_usage"]
         try:
             answer_request = AnswerRequest(
                 goal=state["request"].goal,
@@ -517,13 +573,32 @@ def build_engineered_multi_agent_graph(
             answer = await provider.compose_answer(answer_request)
             validate_answer_citations(answer_request, answer)
             _validate_final_answer(answer, state["plan"], state["worker_results"])
+        except AgentProviderOutputError as error:
+            usage = _add_usage(
+                usage,
+                model_calls=_answer_model_call_count(provider),
+            )
+            return _failure_update(
+                state,
+                history=history,
+                usage=usage,
+                stop_reason=error.stop_reason,
+            )
         except Exception:  # noqa: BLE001 - provider details stay behind this boundary
+            usage = _add_usage(
+                usage,
+                model_calls=_answer_model_call_count(provider),
+            )
             return _failure_update(
                 state,
                 history=history,
                 usage=usage,
                 stop_reason="invalid_answer",
             )
+        usage = _add_usage(
+            usage,
+            model_calls=_answer_model_call_count(provider),
+        )
         return _terminal_action_update(
             state["plan"],
             state.get("current_task_id"),
@@ -611,6 +686,26 @@ def _can_compose_partial(
             or result.artifact_ids
         )
         for result in results
+    )
+
+
+def _worker_evidence_refusal(
+    results: list[WorkerResult],
+) -> CannotCompleteAction | None:
+    if not results or any(
+        result.execution_status != "completed"
+        or result.business_outcome not in {"no_evidence", "unsupported"}
+        for result in results
+    ):
+        return None
+    outcome: Literal["no_evidence", "unsupported"] = (
+        "unsupported"
+        if any(result.business_outcome == "unsupported" for result in results)
+        else "no_evidence"
+    )
+    return CannotCompleteAction(
+        public_summary="当前授权范围内未找到可支持回答的证据。",
+        business_outcome=outcome,
     )
 
 
@@ -713,10 +808,10 @@ def _validate_worker_result(
         for observation in result.observations
         for artifact_id in observation.artifact_ids
     }
-    if not observation_evidence <= set(result.evidence_ids):
-        raise ValueError("Worker result omitted Observation Evidence")
-    if not observation_artifacts <= set(result.artifact_ids):
-        raise ValueError("Worker result omitted Observation Artifacts")
+    if set(result.evidence_ids) != observation_evidence:
+        raise ValueError("Worker result omitted or invented Observation Evidence")
+    if not set(result.artifact_ids) <= observation_artifacts:
+        raise ValueError("Worker result invented Observation Artifacts")
     requirement = task.evidence_requirement
     if (
         result.execution_status == "completed"
@@ -742,9 +837,9 @@ def _validate_final_answer(
         artifact_id for result in worker_results for artifact_id in result.artifact_ids
     }
     if not set(action.evidence_ids) <= available_evidence:
-        raise ValueError("answer invented an Evidence reference")
+        raise AgentProviderOutputError("evidence_reference_contract")
     if not set(action.artifact_ids) <= available_artifacts:
-        raise ValueError("answer invented an Artifact reference")
+        raise AgentProviderOutputError("evidence_reference_contract")
     if action.business_outcome != "answered":
         return
     answer_ids = set(action.evidence_ids)
@@ -755,12 +850,12 @@ def _validate_final_answer(
             continue
         result = results_by_task.get(task.task_id)
         if result is None:
-            raise ValueError("answer omitted a required Worker result")
+            raise AgentProviderOutputError("evidence_reference_contract")
         if (
             len(answer_ids.intersection(result.evidence_ids))
             < requirement.minimum_count
         ):
-            raise ValueError("answer omitted required Evidence")
+            raise AgentProviderOutputError("evidence_reference_contract")
 
 
 def _is_direct_plan(plan: TaskPlan) -> bool:
@@ -1045,3 +1140,8 @@ def _add_usage(
         output_tokens=current.output_tokens + incoming.output_tokens,
         duration_ms=current.duration_ms + incoming.duration_ms,
     )
+
+
+def _answer_model_call_count(provider: EngineeredAgentProvider) -> int:
+    value = getattr(provider, "last_answer_model_calls", 1)
+    return value if isinstance(value, int) and 0 <= value <= 2 else 1

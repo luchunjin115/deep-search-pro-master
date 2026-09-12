@@ -5,11 +5,30 @@ from uuid import uuid4
 import pytest
 
 from app.agents.gateway import AgentGatewayLimits
+from app.api.errors import _status_for_error
 from app.api.routers import threads
+from app.core.errors import AgentProviderOutputError
 from app.schemas.chat import ChatSuccessResponse, ExecutionSummary
 from app.schemas.evidence import DocumentEvidenceSummary
 
 NOW = datetime(2026, 9, 5, 8, 0, tzinfo=UTC)
+
+
+def test_agent_output_stage_does_not_change_the_public_422_contract() -> None:
+    error = AgentProviderOutputError("model_json")
+
+    assert _status_for_error(error) == 422
+    assert error.to_detail().model_dump() == {
+        "code": "PROVIDER_ERROR",
+        "message": "模型返回的Agent结构化结果无效",
+        "retryable": False,
+        "field": "message",
+    }
+
+    untrusted = AgentProviderOutputError("api_key=private")  # type: ignore[arg-type]
+    assert untrusted.stage == "unknown_output_contract"
+    assert untrusted.stop_reason == "invalid_agent_output:unknown_output_contract"
+    assert "private" not in str(untrusted)
 
 
 def test_public_chat_router_has_no_legacy_graph_or_direct_tool_wiring() -> None:

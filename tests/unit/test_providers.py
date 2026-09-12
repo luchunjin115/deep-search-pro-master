@@ -498,6 +498,17 @@ async def test_provider_factory_defaults_to_mock_and_can_build_qwen() -> None:
     await qwen.aclose()
 
 
+def test_m1_provider_factory_never_treats_deepseek_as_qwen() -> None:
+    settings = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        llm_provider="deepseek",
+        deepseek_api_key=SecretStr("deepseek-test-key"),
+    )
+
+    with pytest.raises(ValueError, match="M1 Tool proposal"):
+        create_model_provider(settings)
+
+
 def test_qwen_settings_reject_unsafe_endpoint_and_timeout() -> None:
     with pytest.raises(ValidationError, match="QWEN_API_KEY"):
         Settings(  # type: ignore[call-arg]

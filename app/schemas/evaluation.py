@@ -8,8 +8,9 @@ import json
 import re
 from datetime import date
 from pathlib import PurePosixPath
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from pydantic import (
     Field,
@@ -71,6 +72,55 @@ ExpectedNonAnswerReason = Literal[
     "source_rejected",
     "unknown",
     "no_evidence",
+]
+RerankerTopK = Literal[5, 8]
+ContextEvaluationNeighborWindow = Literal[0, 1]
+ContextEvaluationTokenBudget = Literal[2000, 3000, 4000]
+RerankerRankChange = Literal[
+    "candidate_missing",
+    "promoted",
+    "demoted",
+    "unchanged",
+]
+AnswerCitationReportingCohort = Literal[
+    "real_cross_border",
+    "synthetic_cross_border",
+    "general_diagnostics",
+    "safety_acl_version",
+]
+AnswerableCitationReportingCohort = Literal[
+    "real_cross_border",
+    "synthetic_cross_border",
+    "general_diagnostics",
+]
+AnswerCitationAnswerableGroup = Literal[
+    "all_answerable",
+    "real_cross_border",
+    "synthetic_cross_border",
+    "general_diagnostics",
+]
+AnswerResponseKind = Literal["answer", "refusal"]
+AnswerExecutionStatus = Literal["completed", "provider_failed", "skipped"]
+AnswerExecutionFailureCategory = Literal[
+    "provider_error",
+    "network_error",
+    "timeout",
+    "rate_limited",
+    "output_invalid",
+    "dependency_unavailable",
+    "input_incomplete",
+    "not_run",
+]
+AnswerFailureAttribution = Literal[
+    "upstream_context_unavailable",
+    "upstream_context_missing_golden",
+    "answer_execution_failed",
+    "answer_key_points_missing",
+    "answer_forbidden_assertion",
+    "citation_identity_invalid",
+    "citation_not_golden",
+    "safety_incorrect_answer",
+    "safety_information_leakage",
 ]
 MetricDirection = Literal["higher_is_better", "lower_is_better", "zero_tolerance"]
 ProjectMetricStatus = Literal["completed", "calculation_failed", "skipped"]
@@ -184,6 +234,14 @@ LanguageCode = Annotated[
 Sha256 = Annotated[
     str,
     StringConstraints(strict=True, pattern=r"^[0-9a-f]{64}$", max_length=64),
+]
+AnswerCitationLabel = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        pattern=r"^\[E(?:[1-9]|1[0-2])\]$",
+        max_length=5,
+    ),
 ]
 
 _DRIVE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
@@ -1047,6 +1105,1358 @@ class RetrievalContextEvaluationConfig(M1Schema):
         return self
 
 
+class RerankerContextEvaluationPlan(M1Schema):
+    """Frozen sequential scope for M2-22.7 without changing production settings."""
+
+    contract_version: Literal["m2-reranker-context-evaluation-v1"] = (
+        "m2-reranker-context-evaluation-v1"
+    )
+    chunk_config_id: Literal["chunk-compact-overlap-100"] = "chunk-compact-overlap-100"
+    chunk_target_tokens: Literal[400] = 400
+    chunk_max_tokens: Literal[500] = 500
+    chunk_overlap_tokens: Literal[100] = 100
+    candidate_depth: Literal[10] = 10
+    hybrid_candidate_limit: Literal[20] = 20
+    rrf_k: Literal[60] = 60
+    reranker_top_k_sequence: tuple[Literal[5], Literal[8]] = (5, 8)
+    context_neighbor_window_sequence: tuple[Literal[0], Literal[1]] = (0, 1)
+    context_max_tokens_sequence: tuple[Literal[2000], Literal[3000], Literal[4000]] = (
+        2000,
+        3000,
+        4000,
+    )
+    answerable_case_count: Literal[34] = 34
+    safety_case_count: Literal[6] = 6
+    reranker_model: Literal["BAAI/bge-reranker-v2-m3"] = "BAAI/bge-reranker-v2-m3"
+    reranker_revision: Literal["953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"] = (
+        "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+    )
+    reranker_max_length: Literal[8192] = 8192
+    reranker_precision: Literal["float32"] = "float32"
+    token_counter_version: Literal["m2-unicode-token-counter-v1"] = (
+        "m2-unicode-token-counter-v1"
+    )
+
+
+class RerankerContextExperimentPoint(M1Schema):
+    """One point in the TopK-first, Context-second evaluation sequence."""
+
+    stage: Literal["reranker_top_k", "context"]
+    reranker_top_k: RerankerTopK
+    context_neighbor_window: ContextEvaluationNeighborWindow | None = None
+    context_max_tokens: ContextEvaluationTokenBudget | None = None
+
+    @model_validator(mode="after")
+    def validate_stage(self) -> RerankerContextExperimentPoint:
+        context_values = (self.context_neighbor_window, self.context_max_tokens)
+        if self.stage == "reranker_top_k":
+            if any(value is not None for value in context_values):
+                raise ValueError("Reranker screening cannot contain Context settings")
+        elif not all(value is not None for value in context_values):
+            raise ValueError("Context point requires neighbor and Token settings")
+        return self
+
+
+class RerankerContextSafetyCase(M1Schema):
+    """One non-answer case retained in the separate safety denominator."""
+
+    case_id: SafeIdentifier
+    expected_non_answer_reason: ExpectedNonAnswerReason
+
+
+class RerankerContextEvaluationCohort(M1Schema):
+    """The fixed 34 answerable plus six safety rows used by M2-22.7."""
+
+    dataset_version: VersionLabel
+    answerable_case_ids: list[SafeIdentifier] = Field(min_length=34, max_length=34)
+    safety_cases: list[RerankerContextSafetyCase] = Field(
+        min_length=6,
+        max_length=6,
+    )
+
+    @model_validator(mode="after")
+    def validate_cohort(self) -> RerankerContextEvaluationCohort:
+        if len(self.answerable_case_ids) != len(set(self.answerable_case_ids)):
+            raise ValueError("answerable case IDs must be unique")
+        safety_ids = [item.case_id for item in self.safety_cases]
+        if len(safety_ids) != len(set(safety_ids)):
+            raise ValueError("safety case IDs must be unique")
+        if set(self.answerable_case_ids) & set(safety_ids):
+            raise ValueError("answerable and safety case IDs must be disjoint")
+        reason_counts = {
+            reason: sum(
+                item.expected_non_answer_reason == reason for item in self.safety_cases
+            )
+            for reason in (
+                "acl_denied",
+                "version_unavailable",
+                "no_evidence",
+                "unknown",
+            )
+        }
+        if reason_counts != {
+            "acl_denied": 2,
+            "version_unavailable": 2,
+            "no_evidence": 1,
+            "unknown": 1,
+        }:
+            raise ValueError("safety cases do not match the frozen six-row split")
+        return self
+
+
+class AnswerCitationEvaluationPlan(M1Schema):
+    """Exact M2-22.7.5 configuration consumed by answer evaluation."""
+
+    contract_version: Literal["m2-answer-citation-evaluation-v1"] = (
+        "m2-answer-citation-evaluation-v1"
+    )
+    upstream_contract_version: Literal["m2-reranker-context-evaluation-v1"] = (
+        "m2-reranker-context-evaluation-v1"
+    )
+    dataset_version: Literal["m2-cross-border-rag-smoke-v1"] = (
+        "m2-cross-border-rag-smoke-v1"
+    )
+    chunk_config_id: Literal["chunk-compact-overlap-100"] = "chunk-compact-overlap-100"
+    chunk_target_tokens: Literal[400] = 400
+    chunk_max_tokens: Literal[500] = 500
+    chunk_overlap_tokens: Literal[100] = 100
+    dense_candidate_count: Literal[10] = 10
+    lexical_candidate_count: Literal[10] = 10
+    hybrid_candidate_limit: Literal[20] = 20
+    rrf_k: Literal[60] = 60
+    reranker_top_k: Literal[5] = 5
+    context_neighbor_window: Literal[1] = 1
+    context_max_tokens: Literal[3000] = 3000
+    embedding_model: Literal["BAAI/bge-m3"] = "BAAI/bge-m3"
+    embedding_revision: Literal["5617a9f61b028005a4858fdac845db406aefb181"] = (
+        "5617a9f61b028005a4858fdac845db406aefb181"
+    )
+    reranker_model: Literal["BAAI/bge-reranker-v2-m3"] = "BAAI/bge-reranker-v2-m3"
+    reranker_revision: Literal["953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"] = (
+        "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+    )
+    answerable_case_count: Literal[34] = 34
+    safety_case_count: Literal[6] = 6
+    key_point_matcher_version: Literal["nfkc-casefold-whitespace-v1"] = (
+        "nfkc-casefold-whitespace-v1"
+    )
+    citation_parser_version: Literal["m2-answer-citation-parser-v1"] = (
+        "m2-answer-citation-parser-v1"
+    )
+    citation_semantic_support_evaluated: Literal[False] = False
+
+
+class AnswerCitationAnswerableCohortCase(M1Schema):
+    """One answerable row retained in an explicit reporting cohort."""
+
+    case_id: SafeIdentifier
+    source_group: EvaluationSourceGroup
+    reporting_cohort: AnswerableCitationReportingCohort
+
+
+class AnswerCitationSafetyCohortCase(M1Schema):
+    """One non-answer row retained in the independent safety denominator."""
+
+    case_id: SafeIdentifier
+    source_group: EvaluationSourceGroup
+    reporting_cohort: Literal["safety_acl_version"] = "safety_acl_version"
+    expected_non_answer_reason: ExpectedNonAnswerReason
+
+
+class AnswerCitationEvaluationCohort(M1Schema):
+    """The immutable 34 answerable plus six safety split for M2-22.8."""
+
+    contract_version: Literal["m2-answer-citation-evaluation-v1"] = (
+        "m2-answer-citation-evaluation-v1"
+    )
+    dataset_version: Literal["m2-cross-border-rag-smoke-v1"] = (
+        "m2-cross-border-rag-smoke-v1"
+    )
+    answerable_cases: list[AnswerCitationAnswerableCohortCase] = Field(
+        min_length=34,
+        max_length=34,
+    )
+    safety_cases: list[AnswerCitationSafetyCohortCase] = Field(
+        min_length=6,
+        max_length=6,
+    )
+
+    @model_validator(mode="after")
+    def validate_cohort(self) -> AnswerCitationEvaluationCohort:
+        answerable_ids = [item.case_id for item in self.answerable_cases]
+        safety_ids = [item.case_id for item in self.safety_cases]
+        if len(answerable_ids) != len(set(answerable_ids)):
+            raise ValueError("answerable answer-evaluation case IDs must be unique")
+        if len(safety_ids) != len(set(safety_ids)):
+            raise ValueError("safety answer-evaluation case IDs must be unique")
+        if set(answerable_ids) & set(safety_ids):
+            raise ValueError(
+                "answerable and safety answer-evaluation rows must be disjoint"
+            )
+        reporting_counts = {
+            cohort: sum(
+                item.reporting_cohort == cohort for item in self.answerable_cases
+            )
+            for cohort in (
+                "real_cross_border",
+                "synthetic_cross_border",
+                "general_diagnostics",
+            )
+        }
+        if reporting_counts != {
+            "real_cross_border": 14,
+            "synthetic_cross_border": 10,
+            "general_diagnostics": 10,
+        }:
+            raise ValueError("answerable rows do not match the frozen reporting split")
+        reason_counts = {
+            reason: sum(
+                item.expected_non_answer_reason == reason for item in self.safety_cases
+            )
+            for reason in (
+                "acl_denied",
+                "version_unavailable",
+                "no_evidence",
+                "unknown",
+            )
+        }
+        if reason_counts != {
+            "acl_denied": 2,
+            "version_unavailable": 2,
+            "no_evidence": 1,
+            "unknown": 1,
+        }:
+            raise ValueError("safety rows do not match the frozen six-row split")
+        return self
+
+
+class AnswerKeyPointRule(M1Schema):
+    """One literal Golden point and its explicitly allowed wording variants."""
+
+    key_point_id: SafeIdentifier
+    canonical_text: str = Field(strict=True, min_length=1, max_length=500)
+    accepted_variants: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("accepted_variants")
+    @classmethod
+    def validate_variants(cls, value: list[str]) -> list[str]:
+        if any(
+            not isinstance(item, str) or not 1 <= len(item.strip()) <= 500
+            for item in value
+        ):
+            raise ValueError("accepted answer variants must contain 1-500 characters")
+        normalized = [item.strip() for item in value]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("accepted answer variants must be unique")
+        return normalized
+
+
+class AnswerCitationEvidenceBinding(M1Schema):
+    """One current authorized citation identity plus deterministic Golden mapping."""
+
+    citation_label: AnswerCitationLabel
+    evidence_id: UUID
+    golden_evidence_ids: list[SafeIdentifier] = Field(
+        default_factory=list, max_length=20
+    )
+
+    @model_validator(mode="after")
+    def validate_golden_mapping(self) -> AnswerCitationEvidenceBinding:
+        if len(self.golden_evidence_ids) != len(set(self.golden_evidence_ids)):
+            raise ValueError("citation Golden Evidence IDs must be unique")
+        return self
+
+
+class AnswerExecutionRecord(M1Schema):
+    """One answer-model execution outcome, distinct from metric calculation status."""
+
+    status: AnswerExecutionStatus
+    response_kind: AnswerResponseKind | None = None
+    answer_text: str | None = Field(
+        default=None,
+        strict=True,
+        min_length=1,
+        max_length=4000,
+    )
+    failure_category: AnswerExecutionFailureCategory | None = None
+    failure_summary: str | None = Field(
+        default=None,
+        strict=True,
+        min_length=1,
+        max_length=300,
+    )
+
+    @field_validator("failure_summary")
+    @classmethod
+    def validate_failure_summary(cls, value: str | None) -> str | None:
+        return _validate_safe_failure_summary(value)
+
+    @model_validator(mode="after")
+    def validate_execution(self) -> AnswerExecutionRecord:
+        if self.status == "completed":
+            if self.response_kind is None or self.answer_text is None:
+                raise ValueError("completed answer execution requires a typed answer")
+            if self.failure_category is not None or self.failure_summary is not None:
+                raise ValueError("completed answer execution cannot contain a failure")
+            return self
+        if self.response_kind is not None or self.answer_text is not None:
+            raise ValueError(
+                "failed or skipped answer execution cannot contain an answer"
+            )
+        if self.failure_category is None or self.failure_summary is None:
+            raise ValueError(
+                "failed or skipped answer execution requires a safe reason"
+            )
+        if self.status == "provider_failed" and self.failure_category in {
+            "input_incomplete",
+            "not_run",
+        }:
+            raise ValueError("provider failure requires an execution failure category")
+        if self.status == "skipped" and self.failure_category not in {
+            "input_incomplete",
+            "not_run",
+        }:
+            raise ValueError("skipped answer execution requires a non-execution reason")
+        return self
+
+
+class AnswerCitationCaseResult(M1Schema):
+    """Deterministic per-case answer facts; semantic support is deliberately absent."""
+
+    case_id: SafeIdentifier
+    source_group: EvaluationSourceGroup
+    reporting_cohort: AnswerCitationReportingCohort
+    should_answer: bool
+    expected_non_answer_reason: ExpectedNonAnswerReason | None = None
+    context_status: ProjectMetricStatus
+    answer_execution_status: AnswerExecutionStatus
+    answer_execution_failure_category: AnswerExecutionFailureCategory | None = None
+    status: ProjectMetricStatus
+    expected_key_point_count: int = Field(strict=True, ge=0, le=20)
+    expected_golden_evidence_count: int = Field(strict=True, ge=0, le=20)
+    context_has_complete_golden_evidence: bool | None = None
+    response_kind: AnswerResponseKind | None = None
+    covered_key_point_count: int | None = Field(default=None, strict=True, ge=0, le=20)
+    key_point_coverage_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    forbidden_assertion_count: int | None = Field(
+        default=None, strict=True, ge=0, le=20
+    )
+    forbidden_assertion_detected: bool | None = None
+    answered_when_required: bool | None = None
+    refused_when_required: bool | None = None
+    citation_reference_count: int | None = Field(
+        default=None, strict=True, ge=0, le=1000
+    )
+    unique_citation_count: int | None = Field(default=None, strict=True, ge=0, le=1000)
+    malformed_citation_count: int | None = Field(
+        default=None, strict=True, ge=0, le=1000
+    )
+    duplicate_citation_count: int | None = Field(
+        default=None, strict=True, ge=0, le=1000
+    )
+    out_of_range_citation_count: int | None = Field(
+        default=None, strict=True, ge=0, le=1000
+    )
+    nonexistent_citation_count: int | None = Field(
+        default=None, strict=True, ge=0, le=1000
+    )
+    authorized_citation_count: int | None = Field(
+        default=None, strict=True, ge=0, le=12
+    )
+    golden_citation_count: int | None = Field(default=None, strict=True, ge=0, le=12)
+    cited_golden_evidence_count: int | None = Field(
+        default=None, strict=True, ge=0, le=20
+    )
+    citation_required_missing: bool | None = None
+    citation_syntax_valid: bool | None = None
+    citation_identity_valid: bool | None = None
+    citations_map_to_authorized_evidence: bool | None = None
+    citations_map_to_golden_evidence: bool | None = None
+    golden_citation_precision: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    golden_evidence_citation_recall: FiniteFloat | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+    )
+    safety_leakage_detected: bool | None = None
+    overall_deterministic_pass: bool | None = None
+    citation_semantic_support_evaluated: Literal[False] = False
+    citation_semantic_support_score: None = None
+    failure_attributions: list[AnswerFailureAttribution] = Field(
+        default_factory=list,
+        max_length=9,
+    )
+    failure_category: FailureCategory | None = None
+    failure_summary: str | None = Field(
+        default=None,
+        strict=True,
+        min_length=1,
+        max_length=300,
+    )
+
+    @field_validator("failure_summary")
+    @classmethod
+    def validate_failure_summary(cls, value: str | None) -> str | None:
+        return _validate_safe_failure_summary(value)
+
+    @model_validator(mode="after")
+    def validate_result(self) -> AnswerCitationCaseResult:
+        if len(self.failure_attributions) != len(set(self.failure_attributions)):
+            raise ValueError("answer failure attributions must be unique")
+        if self.answer_execution_status == "completed":
+            if self.answer_execution_failure_category is not None:
+                raise ValueError("completed answer cannot retain an execution failure")
+        elif self.answer_execution_failure_category is None:
+            raise ValueError("failed or skipped answer requires its execution failure")
+        computed = (
+            self.context_has_complete_golden_evidence,
+            self.response_kind,
+            self.covered_key_point_count,
+            self.key_point_coverage_rate,
+            self.forbidden_assertion_count,
+            self.forbidden_assertion_detected,
+            self.answered_when_required,
+            self.refused_when_required,
+            self.citation_reference_count,
+            self.unique_citation_count,
+            self.malformed_citation_count,
+            self.duplicate_citation_count,
+            self.out_of_range_citation_count,
+            self.nonexistent_citation_count,
+            self.authorized_citation_count,
+            self.golden_citation_count,
+            self.cited_golden_evidence_count,
+            self.citation_required_missing,
+            self.citation_syntax_valid,
+            self.citation_identity_valid,
+            self.citations_map_to_authorized_evidence,
+            self.citations_map_to_golden_evidence,
+            self.golden_citation_precision,
+            self.golden_evidence_citation_recall,
+            self.safety_leakage_detected,
+            self.overall_deterministic_pass,
+        )
+        if self.status != "completed":
+            if any(value is not None for value in computed):
+                raise ValueError("failed answer metrics must remain non-numeric")
+            if self.failure_category is None or self.failure_summary is None:
+                raise ValueError("failed answer metrics require a safe reason")
+            if not self.failure_attributions:
+                raise ValueError("failed answer metrics require a failure attribution")
+            return self
+        if self.failure_category is not None or self.failure_summary is not None:
+            raise ValueError(
+                "completed answer metrics cannot contain a calculation failure"
+            )
+        common = (
+            self.response_kind,
+            self.citation_reference_count,
+            self.unique_citation_count,
+            self.malformed_citation_count,
+            self.duplicate_citation_count,
+            self.out_of_range_citation_count,
+            self.nonexistent_citation_count,
+            self.authorized_citation_count,
+            self.golden_citation_count,
+            self.cited_golden_evidence_count,
+            self.citation_required_missing,
+            self.citation_syntax_valid,
+            self.citation_identity_valid,
+            self.citations_map_to_authorized_evidence,
+            self.overall_deterministic_pass,
+        )
+        if any(value is None for value in common):
+            raise ValueError("completed answer metrics require all common facts")
+        assert self.citation_reference_count is not None
+        assert self.unique_citation_count is not None
+        assert self.duplicate_citation_count is not None
+        assert self.authorized_citation_count is not None
+        assert self.golden_citation_count is not None
+        assert self.cited_golden_evidence_count is not None
+        if self.unique_citation_count > self.citation_reference_count:
+            raise ValueError("unique Citation count exceeds all references")
+        if self.duplicate_citation_count != (
+            self.citation_reference_count - self.unique_citation_count
+        ):
+            raise ValueError("duplicate Citation count contradicts references")
+        if self.golden_citation_count > self.authorized_citation_count:
+            raise ValueError("Golden Citation count exceeds authorized Citations")
+        if self.cited_golden_evidence_count > self.expected_golden_evidence_count:
+            raise ValueError("cited Golden Evidence exceeds the expected set")
+        if self.should_answer:
+            applicable = (
+                self.context_has_complete_golden_evidence,
+                self.covered_key_point_count,
+                self.key_point_coverage_rate,
+                self.forbidden_assertion_count,
+                self.forbidden_assertion_detected,
+                self.answered_when_required,
+                self.citations_map_to_golden_evidence,
+                self.golden_citation_precision,
+                self.golden_evidence_citation_recall,
+            )
+            if any(value is None for value in applicable):
+                raise ValueError("answerable result requires all deterministic metrics")
+            if self.expected_non_answer_reason is not None:
+                raise ValueError("answerable result cannot declare a refusal reason")
+            if self.reporting_cohort == "safety_acl_version":
+                raise ValueError("answerable result cannot enter the safety cohort")
+            if (
+                self.expected_key_point_count == 0
+                or self.expected_golden_evidence_count == 0
+            ):
+                raise ValueError(
+                    "answerable result requires Golden points and Evidence"
+                )
+            assert self.covered_key_point_count is not None
+            assert self.key_point_coverage_rate is not None
+            assert self.golden_citation_precision is not None
+            assert self.golden_evidence_citation_recall is not None
+            if not _ratio_matches(
+                self.key_point_coverage_rate,
+                self.covered_key_point_count,
+                self.expected_key_point_count,
+            ):
+                raise ValueError("answer key-point coverage contradicts its counts")
+            if not _ratio_matches(
+                self.golden_citation_precision,
+                self.golden_citation_count,
+                self.unique_citation_count,
+            ) or not _ratio_matches(
+                self.golden_evidence_citation_recall,
+                self.cited_golden_evidence_count,
+                self.expected_golden_evidence_count,
+            ):
+                raise ValueError("Golden Citation rates contradict their counts")
+            if (
+                self.refused_when_required is not None
+                or self.safety_leakage_detected is not None
+            ):
+                raise ValueError("answerable result cannot claim safety-only metrics")
+            return self
+        if self.reporting_cohort != "safety_acl_version":
+            raise ValueError("non-answer result must enter the safety cohort")
+        if self.expected_non_answer_reason is None:
+            raise ValueError("non-answer result requires a refusal reason")
+        if self.expected_key_point_count or self.expected_golden_evidence_count:
+            raise ValueError("non-answer result cannot contain Golden answer material")
+        if any(
+            value is not None
+            for value in (
+                self.context_has_complete_golden_evidence,
+                self.covered_key_point_count,
+                self.key_point_coverage_rate,
+                self.forbidden_assertion_count,
+                self.forbidden_assertion_detected,
+                self.answered_when_required,
+                self.citations_map_to_golden_evidence,
+                self.golden_citation_precision,
+                self.golden_evidence_citation_recall,
+            )
+        ):
+            raise ValueError("safety result cannot claim answerable-only metrics")
+        if self.refused_when_required is None or self.safety_leakage_detected is None:
+            raise ValueError("safety result requires refusal and leakage facts")
+        return self
+
+
+class AnswerCitationAnswerableGroupResult(M1Schema):
+    """One answerable group aggregate that never drops failed rows."""
+
+    group_id: AnswerCitationAnswerableGroup
+    expected_case_count: int = Field(strict=True, ge=1, le=34)
+    status: ProjectMetricStatus
+    context_complete_case_count: int | None = Field(
+        default=None, strict=True, ge=0, le=34
+    )
+    answered_case_count: int | None = Field(default=None, strict=True, ge=0, le=34)
+    fully_covered_case_count: int | None = Field(default=None, strict=True, ge=0, le=34)
+    forbidden_assertion_case_count: int | None = Field(
+        default=None, strict=True, ge=0, le=34
+    )
+    citation_identity_valid_case_count: int | None = Field(
+        default=None, strict=True, ge=0, le=34
+    )
+    citation_syntax_valid_case_count: int | None = Field(
+        default=None, strict=True, ge=0, le=34
+    )
+    authorized_mapping_valid_case_count: int | None = Field(
+        default=None, strict=True, ge=0, le=34
+    )
+    golden_mapping_valid_case_count: int | None = Field(
+        default=None, strict=True, ge=0, le=34
+    )
+    expected_key_point_count: int | None = Field(
+        default=None, strict=True, ge=1, le=680
+    )
+    covered_key_point_count: int | None = Field(default=None, strict=True, ge=0, le=680)
+    citation_reference_count: int | None = Field(
+        default=None, strict=True, ge=0, le=34000
+    )
+    golden_citation_count: int | None = Field(default=None, strict=True, ge=0, le=408)
+    expected_golden_evidence_count: int | None = Field(
+        default=None, strict=True, ge=1, le=680
+    )
+    cited_golden_evidence_count: int | None = Field(
+        default=None, strict=True, ge=0, le=680
+    )
+    deterministic_pass_case_count: int | None = Field(
+        default=None, strict=True, ge=0, le=34
+    )
+    context_complete_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    answer_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    complete_key_point_case_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    key_point_coverage_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    forbidden_assertion_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    citation_identity_valid_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    citation_syntax_valid_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    authorized_mapping_valid_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    golden_mapping_valid_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    golden_citation_precision: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    golden_evidence_citation_recall: FiniteFloat | None = Field(
+        default=None, ge=0, le=1
+    )
+    deterministic_pass_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    failure_category: FailureCategory | None = None
+    failure_summary: str | None = Field(
+        default=None, strict=True, min_length=1, max_length=300
+    )
+
+    @field_validator("failure_summary")
+    @classmethod
+    def validate_failure_summary(cls, value: str | None) -> str | None:
+        return _validate_safe_failure_summary(value)
+
+    @model_validator(mode="after")
+    def validate_aggregate(self) -> AnswerCitationAnswerableGroupResult:
+        computed = tuple(
+            value
+            for name, value in self.__dict__.items()
+            if name
+            not in {
+                "group_id",
+                "expected_case_count",
+                "status",
+                "failure_category",
+                "failure_summary",
+            }
+        )
+        if self.status != "completed":
+            if any(value is not None for value in computed):
+                raise ValueError("failed answer aggregate must remain non-numeric")
+            if self.failure_category is None or self.failure_summary is None:
+                raise ValueError("failed answer aggregate requires a safe reason")
+            return self
+        if any(value is None for value in computed):
+            raise ValueError("completed answer aggregate requires every metric")
+        if self.failure_category is not None or self.failure_summary is not None:
+            raise ValueError("completed answer aggregate cannot contain a failure")
+        counts = (
+            self.context_complete_case_count,
+            self.answered_case_count,
+            self.fully_covered_case_count,
+            self.forbidden_assertion_case_count,
+            self.citation_identity_valid_case_count,
+            self.citation_syntax_valid_case_count,
+            self.authorized_mapping_valid_case_count,
+            self.golden_mapping_valid_case_count,
+            self.deterministic_pass_case_count,
+        )
+        assert all(value is not None for value in counts)
+        if any(cast(int, value) > self.expected_case_count for value in counts):
+            raise ValueError("answer aggregate case count exceeds its denominator")
+        assert self.expected_key_point_count is not None
+        assert self.covered_key_point_count is not None
+        assert self.citation_reference_count is not None
+        assert self.golden_citation_count is not None
+        assert self.expected_golden_evidence_count is not None
+        assert self.cited_golden_evidence_count is not None
+        if self.covered_key_point_count > self.expected_key_point_count:
+            raise ValueError("covered key points exceed the expected total")
+        if self.golden_citation_count > self.citation_reference_count:
+            raise ValueError("Golden Citations exceed all Citation references")
+        if self.cited_golden_evidence_count > self.expected_golden_evidence_count:
+            raise ValueError("cited Golden Evidence exceeds the expected total")
+        count_rate_pairs = (
+            (self.context_complete_case_count, self.context_complete_rate),
+            (self.answered_case_count, self.answer_rate),
+            (self.fully_covered_case_count, self.complete_key_point_case_rate),
+            (self.forbidden_assertion_case_count, self.forbidden_assertion_rate),
+            (
+                self.citation_identity_valid_case_count,
+                self.citation_identity_valid_rate,
+            ),
+            (self.citation_syntax_valid_case_count, self.citation_syntax_valid_rate),
+            (
+                self.authorized_mapping_valid_case_count,
+                self.authorized_mapping_valid_rate,
+            ),
+            (self.golden_mapping_valid_case_count, self.golden_mapping_valid_rate),
+            (self.deterministic_pass_case_count, self.deterministic_pass_rate),
+        )
+        if any(
+            not _ratio_matches(rate, cast(int, count), self.expected_case_count)
+            for count, rate in count_rate_pairs
+        ):
+            raise ValueError("answer aggregate case rates contradict their counts")
+        ratio_checks = (
+            _ratio_matches(
+                self.key_point_coverage_rate,
+                self.covered_key_point_count,
+                self.expected_key_point_count,
+            ),
+            _ratio_matches(
+                self.golden_citation_precision,
+                self.golden_citation_count,
+                self.citation_reference_count,
+            ),
+            _ratio_matches(
+                self.golden_evidence_citation_recall,
+                self.cited_golden_evidence_count,
+                self.expected_golden_evidence_count,
+            ),
+        )
+        if not all(ratio_checks):
+            raise ValueError("answer aggregate rates contradict their totals")
+        return self
+
+
+class AnswerCitationSafetyGroupResult(M1Schema):
+    """The independent six-row safety aggregate with zero-tolerance leakage."""
+
+    group_id: Literal["safety_acl_version"] = "safety_acl_version"
+    expected_case_count: Literal[6] = 6
+    status: ProjectMetricStatus
+    correct_refusal_count: int | None = Field(default=None, strict=True, ge=0, le=6)
+    citation_identity_valid_count: int | None = Field(
+        default=None, strict=True, ge=0, le=6
+    )
+    safety_leakage_count: int | None = Field(default=None, strict=True, ge=0, le=6)
+    safety_pass_count: int | None = Field(default=None, strict=True, ge=0, le=6)
+    correct_refusal_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    citation_identity_valid_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    safety_leakage_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    safety_pass_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    failure_category: FailureCategory | None = None
+    failure_summary: str | None = Field(
+        default=None, strict=True, min_length=1, max_length=300
+    )
+
+    @field_validator("failure_summary")
+    @classmethod
+    def validate_failure_summary(cls, value: str | None) -> str | None:
+        return _validate_safe_failure_summary(value)
+
+    @model_validator(mode="after")
+    def validate_aggregate(self) -> AnswerCitationSafetyGroupResult:
+        computed = (
+            self.correct_refusal_count,
+            self.citation_identity_valid_count,
+            self.safety_leakage_count,
+            self.safety_pass_count,
+            self.correct_refusal_rate,
+            self.citation_identity_valid_rate,
+            self.safety_leakage_rate,
+            self.safety_pass_rate,
+        )
+        if self.status != "completed":
+            if any(value is not None for value in computed):
+                raise ValueError("failed safety aggregate must remain non-numeric")
+            if self.failure_category is None or self.failure_summary is None:
+                raise ValueError("failed safety aggregate requires a safe reason")
+            return self
+        if any(value is None for value in computed):
+            raise ValueError("completed safety aggregate requires every metric")
+        if self.failure_category is not None or self.failure_summary is not None:
+            raise ValueError("completed safety aggregate cannot contain a failure")
+        assert self.correct_refusal_count is not None
+        assert self.citation_identity_valid_count is not None
+        assert self.safety_leakage_count is not None
+        assert self.safety_pass_count is not None
+        count_rate_pairs = (
+            (self.correct_refusal_count, self.correct_refusal_rate),
+            (self.citation_identity_valid_count, self.citation_identity_valid_rate),
+            (self.safety_leakage_count, self.safety_leakage_rate),
+            (self.safety_pass_count, self.safety_pass_rate),
+        )
+        if any(
+            not _ratio_matches(rate, count, self.expected_case_count)
+            for count, rate in count_rate_pairs
+        ):
+            raise ValueError("safety aggregate rates contradict their counts")
+        return self
+
+
+class AnswerCitationGroupedResults(M1Schema):
+    """Fixed all/real/synthetic/diagnostic/safety aggregate columns."""
+
+    contract_version: Literal["m2-answer-citation-evaluation-v1"] = (
+        "m2-answer-citation-evaluation-v1"
+    )
+    all_answerable: AnswerCitationAnswerableGroupResult
+    real_cross_border: AnswerCitationAnswerableGroupResult
+    synthetic_cross_border: AnswerCitationAnswerableGroupResult
+    general_diagnostics: AnswerCitationAnswerableGroupResult
+    safety_acl_version: AnswerCitationSafetyGroupResult
+
+    @model_validator(mode="after")
+    def validate_groups(self) -> AnswerCitationGroupedResults:
+        expected = (
+            (self.all_answerable, "all_answerable", 34),
+            (self.real_cross_border, "real_cross_border", 14),
+            (self.synthetic_cross_border, "synthetic_cross_border", 10),
+            (self.general_diagnostics, "general_diagnostics", 10),
+        )
+        if any(
+            item.group_id != group_id or item.expected_case_count != count
+            for item, group_id, count in expected
+        ):
+            raise ValueError("answer aggregate groups do not match the frozen split")
+        return self
+
+
+class RerankerCaseComparison(M1Schema):
+    """Per-case RRF/Reranker comparison over one unchanged candidate pool."""
+
+    case_id: SafeIdentifier
+    source_group: EvaluationSourceGroup
+    top_k: RerankerTopK
+    expected_evidence_count: int = Field(strict=True, ge=1, le=20)
+    status: ProjectMetricStatus
+    rrf_candidate_count: int | None = Field(default=None, strict=True, ge=0, le=20)
+    reranker_candidate_count: int | None = Field(
+        default=None,
+        strict=True,
+        ge=0,
+        le=20,
+    )
+    candidate_set_unchanged: bool | None = None
+    rrf_first_golden_rank: int | None = Field(default=None, strict=True, ge=1, le=20)
+    reranker_first_golden_rank: int | None = Field(
+        default=None,
+        strict=True,
+        ge=1,
+        le=20,
+    )
+    rank_change: RerankerRankChange | None = None
+    rrf_hit_at_k: bool | None = None
+    reranker_hit_at_k: bool | None = None
+    failure_category: FailureCategory | None = None
+    failure_summary: str | None = Field(
+        default=None,
+        strict=True,
+        min_length=1,
+        max_length=300,
+    )
+
+    @field_validator("failure_summary")
+    @classmethod
+    def validate_failure_summary(cls, value: str | None) -> str | None:
+        return _validate_safe_failure_summary(value)
+
+    @model_validator(mode="after")
+    def validate_comparison(self) -> RerankerCaseComparison:
+        computed = (
+            self.rrf_candidate_count,
+            self.reranker_candidate_count,
+            self.candidate_set_unchanged,
+            self.rank_change,
+            self.rrf_hit_at_k,
+            self.reranker_hit_at_k,
+        )
+        if self.status != "completed":
+            if any(
+                value is not None
+                for value in (
+                    *computed,
+                    self.rrf_first_golden_rank,
+                    self.reranker_first_golden_rank,
+                )
+            ):
+                raise ValueError("failed Reranker comparison must remain non-numeric")
+            if self.failure_category is None or self.failure_summary is None:
+                raise ValueError("failed Reranker comparison requires a safe reason")
+            return self
+        if self.failure_category is not None or self.failure_summary is not None:
+            raise ValueError("completed Reranker comparison cannot contain a failure")
+        if any(value is None for value in computed):
+            raise ValueError("completed Reranker comparison requires all facts")
+        if (
+            self.rrf_candidate_count != self.reranker_candidate_count
+            or self.candidate_set_unchanged is not True
+        ):
+            raise ValueError("RRF and Reranker must use one unchanged candidate pool")
+        candidate_count = self.rrf_candidate_count
+        assert candidate_count is not None
+        if (
+            self.rrf_first_golden_rank is not None
+            and self.rrf_first_golden_rank > candidate_count
+        ) or (
+            self.reranker_first_golden_rank is not None
+            and self.reranker_first_golden_rank > candidate_count
+        ):
+            raise ValueError("Golden rank cannot exceed the candidate pool")
+        if self.rrf_first_golden_rank is None:
+            expected_change = "candidate_missing"
+            if self.reranker_first_golden_rank is not None:
+                raise ValueError(
+                    "Reranker cannot recover an upstream missing candidate"
+                )
+        else:
+            if self.reranker_first_golden_rank is None:
+                raise ValueError("unchanged candidate pool cannot drop Golden Evidence")
+            if self.reranker_first_golden_rank < self.rrf_first_golden_rank:
+                expected_change = "promoted"
+            elif self.reranker_first_golden_rank > self.rrf_first_golden_rank:
+                expected_change = "demoted"
+            else:
+                expected_change = "unchanged"
+        if self.rank_change != expected_change:
+            raise ValueError("rank change contradicts the two Golden ranks")
+        if self.rrf_hit_at_k != (
+            self.rrf_first_golden_rank is not None
+            and self.rrf_first_golden_rank <= self.top_k
+        ):
+            raise ValueError("RRF TopK hit contradicts its Golden rank")
+        if self.reranker_hit_at_k != (
+            self.reranker_first_golden_rank is not None
+            and self.reranker_first_golden_rank <= self.top_k
+        ):
+            raise ValueError("Reranker TopK hit contradicts its Golden rank")
+        return self
+
+
+def _ratio_matches(value: float | None, numerator: int, denominator: int) -> bool:
+    expected = numerator / denominator if denominator else 0.0
+    return value is not None and abs(float(value) - expected) <= 1e-12
+
+
+class ContextCaseQualityResult(M1Schema):
+    """Golden-relative Context quality; failures never masquerade as zeroes."""
+
+    case_id: SafeIdentifier
+    source_group: EvaluationSourceGroup
+    reranker_top_k: RerankerTopK
+    context_neighbor_window: ContextEvaluationNeighborWindow
+    context_max_tokens: ContextEvaluationTokenBudget
+    expected_evidence_count: int = Field(strict=True, ge=1, le=20)
+    status: ProjectMetricStatus
+    supported: bool | None = None
+    segment_count: int | None = Field(default=None, strict=True, ge=0, le=12)
+    anchor_segment_count: int | None = Field(default=None, strict=True, ge=0, le=8)
+    covered_golden_evidence_count: int | None = Field(
+        default=None,
+        strict=True,
+        ge=0,
+        le=20,
+    )
+    anchor_covered_golden_evidence_count: int | None = Field(
+        default=None,
+        strict=True,
+        ge=0,
+        le=20,
+    )
+    redundant_segment_count: int | None = Field(
+        default=None,
+        strict=True,
+        ge=0,
+        le=12,
+    )
+    total_tokens: int | None = Field(default=None, strict=True, ge=0, le=4000)
+    golden_evidence_coverage_rate: FiniteFloat | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+    )
+    anchor_golden_evidence_coverage_rate: FiniteFloat | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+    )
+    context_redundancy_rate: FiniteFloat | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+    )
+    token_utilization_rate: FiniteFloat | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+    )
+    failure_category: FailureCategory | None = None
+    failure_summary: str | None = Field(
+        default=None,
+        strict=True,
+        min_length=1,
+        max_length=300,
+    )
+
+    @field_validator("failure_summary")
+    @classmethod
+    def validate_failure_summary(cls, value: str | None) -> str | None:
+        return _validate_safe_failure_summary(value)
+
+    @model_validator(mode="after")
+    def validate_quality(self) -> ContextCaseQualityResult:
+        computed = (
+            self.supported,
+            self.segment_count,
+            self.anchor_segment_count,
+            self.covered_golden_evidence_count,
+            self.anchor_covered_golden_evidence_count,
+            self.redundant_segment_count,
+            self.total_tokens,
+            self.golden_evidence_coverage_rate,
+            self.anchor_golden_evidence_coverage_rate,
+            self.context_redundancy_rate,
+            self.token_utilization_rate,
+        )
+        if self.status != "completed":
+            if any(value is not None for value in computed):
+                raise ValueError("failed Context metrics must remain non-numeric")
+            if self.failure_category is None or self.failure_summary is None:
+                raise ValueError("failed Context metrics require a safe reason")
+            return self
+        if self.failure_category is not None or self.failure_summary is not None:
+            raise ValueError("completed Context metrics cannot contain a failure")
+        if any(value is None for value in computed):
+            raise ValueError(
+                "completed Context metrics require all deterministic facts"
+            )
+        segment_count = self.segment_count
+        anchor_count = self.anchor_segment_count
+        covered = self.covered_golden_evidence_count
+        anchor_covered = self.anchor_covered_golden_evidence_count
+        redundant = self.redundant_segment_count
+        total_tokens = self.total_tokens
+        assert segment_count is not None
+        assert anchor_count is not None
+        assert covered is not None
+        assert anchor_covered is not None
+        assert redundant is not None
+        assert total_tokens is not None
+        if self.supported != (segment_count > 0):
+            raise ValueError("Context support must agree with its segment count")
+        if segment_count > 0 and (anchor_count == 0 or total_tokens == 0):
+            raise ValueError("supported Context requires a real anchor and Tokens")
+        if anchor_count > min(segment_count, self.reranker_top_k):
+            raise ValueError("Context anchor count exceeds selected Reranker TopK")
+        if covered > self.expected_evidence_count or anchor_covered > covered:
+            raise ValueError("Context Golden Evidence counts are inconsistent")
+        if redundant > segment_count:
+            raise ValueError("Context redundant segment count exceeds its total")
+        if total_tokens > self.context_max_tokens:
+            raise ValueError("Context total exceeds its Token budget")
+        ratio_checks = (
+            _ratio_matches(
+                self.golden_evidence_coverage_rate,
+                covered,
+                self.expected_evidence_count,
+            ),
+            _ratio_matches(
+                self.anchor_golden_evidence_coverage_rate,
+                anchor_covered,
+                self.expected_evidence_count,
+            ),
+            _ratio_matches(
+                self.context_redundancy_rate,
+                redundant,
+                segment_count,
+            ),
+            _ratio_matches(
+                self.token_utilization_rate,
+                total_tokens,
+                self.context_max_tokens,
+            ),
+        )
+        if not all(ratio_checks):
+            raise ValueError("Context rates contradict their deterministic counts")
+        return self
+
+
+class RerankerGroupAggregateResult(M1Schema):
+    """One answerable group aggregate whose denominator cannot silently shrink."""
+
+    group_id: SafeIdentifier
+    top_k: RerankerTopK
+    expected_case_count: int = Field(strict=True, ge=1, le=34)
+    status: ProjectMetricStatus
+    candidate_missing_count: int | None = Field(default=None, strict=True, ge=0, le=34)
+    promoted_count: int | None = Field(default=None, strict=True, ge=0, le=34)
+    demoted_count: int | None = Field(default=None, strict=True, ge=0, le=34)
+    unchanged_count: int | None = Field(default=None, strict=True, ge=0, le=34)
+    rrf_hit_count: int | None = Field(default=None, strict=True, ge=0, le=34)
+    reranker_hit_count: int | None = Field(default=None, strict=True, ge=0, le=34)
+    rrf_hit_rate_at_k: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    reranker_hit_rate_at_k: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    failure_category: FailureCategory | None = None
+    failure_summary: str | None = Field(
+        default=None,
+        strict=True,
+        min_length=1,
+        max_length=300,
+    )
+
+    @field_validator("failure_summary")
+    @classmethod
+    def validate_failure_summary(cls, value: str | None) -> str | None:
+        return _validate_safe_failure_summary(value)
+
+    @model_validator(mode="after")
+    def validate_aggregate(self) -> RerankerGroupAggregateResult:
+        computed = (
+            self.candidate_missing_count,
+            self.promoted_count,
+            self.demoted_count,
+            self.unchanged_count,
+            self.rrf_hit_count,
+            self.reranker_hit_count,
+            self.rrf_hit_rate_at_k,
+            self.reranker_hit_rate_at_k,
+        )
+        if self.status != "completed":
+            if any(value is not None for value in computed):
+                raise ValueError("failed Reranker aggregate must remain non-numeric")
+            if self.failure_category is None or self.failure_summary is None:
+                raise ValueError("failed Reranker aggregate requires a safe reason")
+            return self
+        if any(value is None for value in computed):
+            raise ValueError("completed Reranker aggregate requires all counts")
+        if self.failure_category is not None or self.failure_summary is not None:
+            raise ValueError("completed Reranker aggregate cannot contain a failure")
+        movement_counts = (
+            self.candidate_missing_count,
+            self.promoted_count,
+            self.demoted_count,
+            self.unchanged_count,
+        )
+        assert all(value is not None for value in movement_counts)
+        assert self.candidate_missing_count is not None
+        assert self.promoted_count is not None
+        assert self.demoted_count is not None
+        assert self.unchanged_count is not None
+        movement_total = (
+            self.candidate_missing_count
+            + self.promoted_count
+            + self.demoted_count
+            + self.unchanged_count
+        )
+        if movement_total != self.expected_case_count:
+            raise ValueError("rank-change counts must preserve the full denominator")
+        assert self.rrf_hit_count is not None
+        assert self.reranker_hit_count is not None
+        if not _ratio_matches(
+            self.rrf_hit_rate_at_k,
+            self.rrf_hit_count,
+            self.expected_case_count,
+        ) or not _ratio_matches(
+            self.reranker_hit_rate_at_k,
+            self.reranker_hit_count,
+            self.expected_case_count,
+        ):
+            raise ValueError("Reranker aggregate rates contradict their hit counts")
+        return self
+
+
+class ContextGroupAggregateResult(M1Schema):
+    """One Context group aggregate; any calculation failure keeps rates absent."""
+
+    group_id: SafeIdentifier
+    reranker_top_k: RerankerTopK
+    context_neighbor_window: ContextEvaluationNeighborWindow
+    context_max_tokens: ContextEvaluationTokenBudget
+    expected_case_count: int = Field(strict=True, ge=1, le=34)
+    status: ProjectMetricStatus
+    expected_evidence_count: int | None = Field(default=None, strict=True, ge=1, le=680)
+    covered_golden_evidence_count: int | None = Field(
+        default=None, strict=True, ge=0, le=680
+    )
+    anchor_covered_golden_evidence_count: int | None = Field(
+        default=None, strict=True, ge=0, le=680
+    )
+    segment_count: int | None = Field(default=None, strict=True, ge=0, le=408)
+    redundant_segment_count: int | None = Field(default=None, strict=True, ge=0, le=408)
+    total_tokens: int | None = Field(default=None, strict=True, ge=0, le=136000)
+    golden_evidence_coverage_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    anchor_golden_evidence_coverage_rate: FiniteFloat | None = Field(
+        default=None, ge=0, le=1
+    )
+    context_redundancy_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    token_utilization_rate: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    failure_category: FailureCategory | None = None
+    failure_summary: str | None = Field(
+        default=None,
+        strict=True,
+        min_length=1,
+        max_length=300,
+    )
+
+    @field_validator("failure_summary")
+    @classmethod
+    def validate_failure_summary(cls, value: str | None) -> str | None:
+        return _validate_safe_failure_summary(value)
+
+    @model_validator(mode="after")
+    def validate_aggregate(self) -> ContextGroupAggregateResult:
+        computed = (
+            self.expected_evidence_count,
+            self.covered_golden_evidence_count,
+            self.anchor_covered_golden_evidence_count,
+            self.segment_count,
+            self.redundant_segment_count,
+            self.total_tokens,
+            self.golden_evidence_coverage_rate,
+            self.anchor_golden_evidence_coverage_rate,
+            self.context_redundancy_rate,
+            self.token_utilization_rate,
+        )
+        if self.status != "completed":
+            if any(value is not None for value in computed):
+                raise ValueError("failed Context aggregate must remain non-numeric")
+            if self.failure_category is None or self.failure_summary is None:
+                raise ValueError("failed Context aggregate requires a safe reason")
+            return self
+        if any(value is None for value in computed):
+            raise ValueError("completed Context aggregate requires all counts")
+        if self.failure_category is not None or self.failure_summary is not None:
+            raise ValueError("completed Context aggregate cannot contain a failure")
+        expected = self.expected_evidence_count
+        covered = self.covered_golden_evidence_count
+        anchor_covered = self.anchor_covered_golden_evidence_count
+        segments = self.segment_count
+        redundant = self.redundant_segment_count
+        tokens = self.total_tokens
+        assert expected is not None
+        assert covered is not None
+        assert anchor_covered is not None
+        assert segments is not None
+        assert redundant is not None
+        assert tokens is not None
+        if anchor_covered > covered or covered > expected or redundant > segments:
+            raise ValueError("Context aggregate counts are inconsistent")
+        if tokens > self.expected_case_count * self.context_max_tokens:
+            raise ValueError("Context aggregate exceeds its total Token budget")
+        if not all(
+            (
+                _ratio_matches(self.golden_evidence_coverage_rate, covered, expected),
+                _ratio_matches(
+                    self.anchor_golden_evidence_coverage_rate,
+                    anchor_covered,
+                    expected,
+                ),
+                _ratio_matches(self.context_redundancy_rate, redundant, segments),
+                _ratio_matches(
+                    self.token_utilization_rate,
+                    tokens,
+                    self.expected_case_count * self.context_max_tokens,
+                ),
+            )
+        ):
+            raise ValueError("Context aggregate rates contradict their counts")
+        return self
+
+
+class RerankerContextSafetyCaseResult(M1Schema):
+    """One retained non-answer row with security checks separate from semantics."""
+
+    case_id: SafeIdentifier
+    expected_non_answer_reason: ExpectedNonAnswerReason
+    top_k: RerankerTopK
+    status: ProjectMetricStatus
+    rrf_returned_candidate_count: int | None = Field(
+        default=None, strict=True, ge=0, le=20
+    )
+    reranker_returned_candidate_count: int | None = Field(
+        default=None, strict=True, ge=0, le=20
+    )
+    context_segment_count: int | None = Field(default=None, strict=True, ge=0, le=12)
+    rrf_first_forbidden_rank: int | None = Field(default=None, strict=True, ge=1, le=20)
+    reranker_first_forbidden_rank: int | None = Field(
+        default=None, strict=True, ge=1, le=20
+    )
+    context_forbidden_segment_count: int | None = Field(
+        default=None, strict=True, ge=0, le=12
+    )
+    security_violation: bool | None = None
+    failure_category: FailureCategory | None = None
+    failure_summary: str | None = Field(
+        default=None,
+        strict=True,
+        min_length=1,
+        max_length=300,
+    )
+
+    @field_validator("failure_summary")
+    @classmethod
+    def validate_failure_summary(cls, value: str | None) -> str | None:
+        return _validate_safe_failure_summary(value)
+
+    @model_validator(mode="after")
+    def validate_safety(self) -> RerankerContextSafetyCaseResult:
+        base_counts = (
+            self.rrf_returned_candidate_count,
+            self.reranker_returned_candidate_count,
+            self.context_segment_count,
+        )
+        if self.status != "completed":
+            computed = (
+                *base_counts,
+                self.rrf_first_forbidden_rank,
+                self.reranker_first_forbidden_rank,
+                self.context_forbidden_segment_count,
+                self.security_violation,
+            )
+            if any(value is not None for value in computed):
+                raise ValueError("failed safety result must remain non-numeric")
+            if self.failure_category is None or self.failure_summary is None:
+                raise ValueError("failed safety result requires a safe reason")
+            return self
+        if any(value is None for value in base_counts):
+            raise ValueError("completed safety result requires returned counts")
+        if self.failure_category is not None or self.failure_summary is not None:
+            raise ValueError("completed safety result cannot contain a failure")
+        security_reason = self.expected_non_answer_reason in {
+            "acl_denied",
+            "version_unavailable",
+            "source_rejected",
+        }
+        assert self.rrf_returned_candidate_count is not None
+        assert self.reranker_returned_candidate_count is not None
+        if (
+            self.rrf_first_forbidden_rank is not None
+            and self.rrf_first_forbidden_rank > self.rrf_returned_candidate_count
+        ) or (
+            self.reranker_first_forbidden_rank is not None
+            and self.reranker_first_forbidden_rank
+            > self.reranker_returned_candidate_count
+        ):
+            raise ValueError("forbidden rank exceeds the returned safety candidates")
+        if security_reason:
+            if (
+                self.context_forbidden_segment_count is None
+                or self.security_violation is None
+            ):
+                raise ValueError("protected safety row requires zero-tolerance facts")
+            expected_violation = bool(
+                self.rrf_first_forbidden_rank is not None
+                or self.reranker_first_forbidden_rank is not None
+                or self.context_forbidden_segment_count > 0
+            )
+            if self.security_violation != expected_violation:
+                raise ValueError("security violation contradicts forbidden results")
+        elif any(
+            value is not None
+            for value in (
+                self.rrf_first_forbidden_rank,
+                self.reranker_first_forbidden_rank,
+                self.context_forbidden_segment_count,
+                self.security_violation,
+            )
+        ):
+            raise ValueError("semantic non-answer rows cannot claim a security score")
+        return self
+
+
 class EvaluationConfigurationCatalog(M1Schema):
     """A bounded catalog whose IDs remain unique across configuration kinds."""
 
@@ -1324,6 +2734,7 @@ class RagasMetricResult(M1Schema):
             if self.status == "judge_failed" and self.failure_category not in {
                 "judge_provider_error",
                 "judge_timeout",
+                "network_error",
                 "rate_limited",
             }:
                 raise ValueError("Judge failure requires a Judge failure category")

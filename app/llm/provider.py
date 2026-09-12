@@ -32,6 +32,9 @@ def create_model_provider(
 
         return MockProvider()
 
+    if settings.llm_provider != "qwen":
+        raise ValueError("The M1 Tool proposal path only supports mock or Qwen")
+
     from app.llm.qwen import QwenProvider
 
     if settings.qwen_api_key is None:

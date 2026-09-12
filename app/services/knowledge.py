@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from app.core.errors import KnowledgeEvidencePersistenceError
+from app.core.rag_trace import record_rag_stage
 from app.schemas.auth import CurrentUser
 from app.schemas.evidence import DocumentEvidenceDetail
 from app.schemas.knowledge import SearchKnowledgeInput, SearchKnowledgeResult
@@ -132,9 +133,11 @@ class KnowledgeSearchService:
             runtime_context=runtime_context,
         )
         try:
-            return _outcome_from_persisted(built, persisted)
+            outcome = _outcome_from_persisted(built, persisted)
         except (AttributeError, TypeError, ValueError, ValidationError):
             raise KnowledgeEvidencePersistenceError from None
+        record_rag_stage("context", outcome.result.context)
+        return outcome
 
 
 def _outcome_from_persisted(

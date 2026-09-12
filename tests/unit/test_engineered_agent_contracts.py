@@ -204,6 +204,25 @@ def test_action_is_a_strict_discriminated_union_with_one_action_only() -> None:
         )
 
 
+def test_finish_action_rejects_removed_evidence_support_selector_field() -> None:
+    evidence_id = uuid4()
+
+    with pytest.raises(ValidationError):
+        FinishAction.model_validate(
+            {
+                "public_summary": "已完成获权检索。",
+                "business_outcome": "answered",
+                "evidence_ids": [evidence_id],
+                "evidence_supports": [
+                    {
+                        "evidence_id": evidence_id,
+                        "exact_quote": "清洁前必须断开电源。",
+                    }
+                ],
+            }
+        )
+
+
 @pytest.mark.parametrize(
     "forbidden",
     [

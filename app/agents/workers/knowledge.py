@@ -497,27 +497,53 @@ def _public_result_data(
 
     if capability_id == "search_knowledge" and isinstance(data, SearchKnowledgeResult):
         context = data.context
-        return {
-            "context_id": str(context.context_id),
-            "supported": context.supported,
-            "segments": [
-                {
-                    "evidence_id": str(segment.evidence_id),
-                    "citation_label": segment.citation_label,
-                    "source_type": segment.source_type,
-                    "title": segment.document.title,
-                    "text": segment.text[:1200],
-                    "source_locator_json": segment.source_locator.model_dump_json()[
-                        :384
-                    ],
-                    "document_id": str(segment.identity.document_id),
-                    "version_id": str(segment.identity.version_id),
-                    "index_set_id": str(segment.identity.index_set_id),
-                    "chunk_id": str(segment.identity.chunk_id),
-                }
-                for segment in context.segments
-            ],
-        }
+
+        def search_data(text_limit: int) -> dict[str, object]:
+            return {
+                "context_id": str(context.context_id),
+                "supported": context.supported,
+                "segments": [
+                    {
+                        "evidence_id": str(segment.evidence_id),
+                        "citation_label": segment.citation_label,
+                        "source_type": segment.source_type,
+                        "title": segment.document.title,
+                        "text": segment.text[:text_limit],
+                        "source_locator_json": segment.source_locator.model_dump_json()[
+                            :384
+                        ],
+                        "document_id": str(segment.identity.document_id),
+                        "version_id": str(segment.identity.version_id),
+                        "index_set_id": str(segment.identity.index_set_id),
+                        "chunk_id": str(segment.identity.chunk_id),
+                    }
+                    for segment in context.segments
+                ],
+            }
+
+        def fits_agent_json(candidate: dict[str, object]) -> bool:
+            try:
+                BoundedJsonObject({"capability_id": capability_id, "data": candidate})
+            except ValueError:
+                return False
+            return True
+
+        full = search_data(1200)
+        if fits_agent_json(full):
+            return full
+
+        low = 0
+        high = 1199
+        while low < high:
+            middle = (low + high + 1) // 2
+            if fits_agent_json(search_data(middle)):
+                low = middle
+            else:
+                high = middle - 1
+        bounded = search_data(low)
+        if not fits_agent_json(bounded):
+            raise AgentProviderOutputError
+        return bounded
     if capability_id == "read_uploaded_file" and isinstance(
         data, ReadUploadedFileResult
     ):
@@ -588,28 +614,40 @@ def _finished_result(
 ) -> WorkerResult:
     successful = [item for item in observations if item.status == "success"]
     failed = [item for item in observations if item.status != "success"]
-    evidence_ids = _unique_evidence_ids(observations)
+    available_evidence_ids = _unique_evidence_ids(observations)
     artifact_ids = _unique_artifact_ids(observations)
-    if action.evidence_ids != evidence_ids or action.artifact_ids != artifact_ids:
+    if (
+        action.evidence_ids != available_evidence_ids
+        or action.artifact_ids != artifact_ids
+    ):
         raise AgentProviderOutputError
     if action.business_outcome == "answered" and (not successful or failed):
         raise AgentProviderOutputError
     if action.business_outcome == "partial" and (not successful or not failed):
         raise AgentProviderOutputError
-    if action.business_outcome == "no_evidence" and (
-        not successful or evidence_ids or artifact_ids or failed
+    if action.business_outcome in {"answered", "partial"} and not (
+        action.evidence_ids or action.artifact_ids
     ):
         raise AgentProviderOutputError
+    if action.business_outcome == "no_evidence" and (
+        not successful or available_evidence_ids or artifact_ids or failed
+    ):
+        raise AgentProviderOutputError
+
+    projected_observations = _deduplicate_evidence_observations(observations)
+    projected_successful = [
+        item for item in projected_observations if item.status == "success"
+    ]
 
     return WorkerResult(
         task_id=handoff.task_id,
         worker_id=handoff.target_worker,
         execution_status="completed",
         business_outcome=action.business_outcome,
-        business_result=_business_result(successful),
+        business_result=_business_result(projected_successful),
         public_summary=action.public_summary,
-        observations=list(observations),
-        evidence_ids=evidence_ids,
+        observations=projected_observations,
+        evidence_ids=list(action.evidence_ids),
         artifact_ids=artifact_ids,
         unknowns=_unique_unknowns(observations),
         safe_errors=(
@@ -703,6 +741,72 @@ def _cannot_complete_result(
     )
 
 
+def _deduplicate_evidence_observations(
+    observations: Sequence[WorkerObservation],
+) -> list[WorkerObservation]:
+    """Prefer an Evidence detail over its duplicate search-result copy."""
+
+    selected_evidence = set(_unique_evidence_ids(observations))
+    detail_evidence = {
+        evidence_id
+        for observation in observations
+        if _observation_capability_id(observation) == "get_evidence_detail"
+        for evidence_id in observation.evidence_ids
+        if evidence_id in selected_evidence
+    }
+    projected: list[WorkerObservation] = []
+    for observation in observations:
+        capability_id = _observation_capability_id(observation)
+        kept_evidence = [
+            evidence_id
+            for evidence_id in observation.evidence_ids
+            if evidence_id in selected_evidence
+            and not (
+                capability_id == "search_knowledge" and evidence_id in detail_evidence
+            )
+        ]
+        if observation.evidence_ids and not kept_evidence:
+            continue
+
+        structured_result = observation.structured_result
+        if capability_id == "search_knowledge" and structured_result is not None:
+            root = structured_result.root
+            data = root.get("data")
+            if not isinstance(data, dict) or not isinstance(data.get("segments"), list):
+                raise AgentProviderOutputError
+            selected_strings = {str(value) for value in kept_evidence}
+            selected_segments = [
+                segment
+                for segment in data["segments"]
+                if isinstance(segment, dict)
+                and segment.get("evidence_id") in selected_strings
+            ]
+            projected_data = dict(data)
+            projected_data["segments"] = selected_segments
+            projected_data["supported"] = bool(selected_segments)
+            structured_result = BoundedJsonObject(
+                {"capability_id": capability_id, "data": projected_data}
+            )
+
+        projected.append(
+            observation.model_copy(
+                update={
+                    "structured_result": structured_result,
+                    "evidence_ids": kept_evidence,
+                },
+                deep=True,
+            )
+        )
+    return projected
+
+
+def _observation_capability_id(observation: WorkerObservation) -> str | None:
+    if observation.structured_result is None:
+        return None
+    value = observation.structured_result.root.get("capability_id")
+    return value if isinstance(value, str) else None
+
+
 def _failed_result(
     handoff: AgentHandoff,
     observations: Sequence[WorkerObservation],
@@ -728,6 +832,9 @@ def _failed_result(
                 message=error.message,
                 retryable=error.retryable,
                 field=error.field,
+                diagnostic_stage=(
+                    error.stage if isinstance(error, AgentProviderOutputError) else None
+                ),
             )
         ],
         resource_usage=_zero_usage(),

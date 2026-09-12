@@ -39,7 +39,7 @@ from app.schemas.agent import (
 from app.schemas.common import ToolEnvelope, ToolMeta, ToolName
 from app.schemas.context import ContextBundle, ContextSegment
 from app.schemas.evidence import GetEvidenceDetailResult, ToolDocumentEvidenceDetail
-from app.schemas.file_reading import ReadUploadedFileResult
+from app.schemas.file_reading import FileReadSection, ReadUploadedFileResult
 from app.schemas.knowledge import SearchKnowledgeResult
 from app.schemas.retrieval import (
     PdfRetrievalSourceLocator,
@@ -57,6 +57,7 @@ TENANT_ID = UUID("00000000-0000-0000-0000-000000000706")
 USER_ID = UUID("00000000-0000-0000-0000-000000000707")
 THREAD_ID = UUID("00000000-0000-0000-0000-000000000708")
 EVIDENCE_ID = UUID("00000000-0000-0000-0000-000000000709")
+SECOND_EVIDENCE_ID = UUID("00000000-0000-0000-0000-000000000719")
 FORGED_EVIDENCE_ID = UUID("00000000-0000-0000-0000-000000000710")
 FILE_ID = UUID("00000000-0000-0000-0000-000000000711")
 FORGED_FILE_ID = UUID("00000000-0000-0000-0000-000000000712")
@@ -155,8 +156,14 @@ def _segment() -> ContextSegment:
     )
 
 
-def search_envelope(*, supported: bool = True) -> ToolEnvelope[SearchKnowledgeResult]:
-    segments = [_segment()] if supported else []
+def search_envelope(
+    *,
+    supported: bool = True,
+    segments: list[ContextSegment] | None = None,
+) -> ToolEnvelope[SearchKnowledgeResult]:
+    selected_segments = segments if segments is not None else [_segment()]
+    if not supported:
+        selected_segments = []
     return ToolEnvelope[SearchKnowledgeResult](
         status="success",
         data=SearchKnowledgeResult(
@@ -165,12 +172,12 @@ def search_envelope(*, supported: bool = True) -> ToolEnvelope[SearchKnowledgeRe
                 query_sha256="b" * 64,
                 context_sha256="c" * 64,
                 max_tokens=4000,
-                total_tokens=10 if supported else 0,
+                total_tokens=sum(item.token_count for item in selected_segments),
                 supported=supported,
-                segments=segments,
+                segments=selected_segments,
             )
         ),
-        evidence_ids=[EVIDENCE_ID] if supported else [],
+        evidence_ids=[item.evidence_id for item in selected_segments],
         meta=tool_meta("search_knowledge"),
     )
 
@@ -188,12 +195,12 @@ def file_envelope() -> ToolEnvelope[ReadUploadedFileResult]:
             source_type="pdf",
             is_active_version=True,
             sections=[
-                {
-                    "kind": "text",
-                    "locator": {"source_type": "pdf", "page_number": 1},
-                    "content": content,
-                    "truncated": False,
-                }
+                FileReadSection(
+                    kind="text",
+                    locator=PdfRetrievalSourceLocator(page_number=1),
+                    content=content,
+                    truncated=False,
+                )
             ],
             total_characters=len(content),
             truncated=False,
@@ -264,17 +271,18 @@ def finish_from_observations(
     *,
     outcome: Literal["answered", "partial", "no_evidence"] = "answered",
 ) -> AgentDecision:
+    evidence_ids = list(
+        dict.fromkeys(
+            item
+            for observation in request.observations
+            for item in observation.evidence_ids
+        )
+    )
     return AgentDecision(
         action=FinishAction(
             public_summary="Knowledge Worker已完成获权查询。",
             business_outcome=outcome,
-            evidence_ids=list(
-                dict.fromkeys(
-                    item
-                    for observation in request.observations
-                    for item in observation.evidence_ids
-                )
-            ),
+            evidence_ids=evidence_ids,
             artifact_ids=list(
                 dict.fromkeys(
                     item
@@ -360,6 +368,144 @@ async def test_search_knowledge_returns_document_evidence() -> None:
     assert result.artifact_ids == []
     assert result.business_result is not None
     assert "knowledge_search" in result.business_result.root
+
+
+@pytest.mark.asyncio
+async def test_search_knowledge_requires_every_observed_evidence() -> None:
+    irrelevant = _segment().model_copy(
+        update={"text": "这段只介绍产品颜色，不能回答清洁要求。"}
+    )
+    supporting = _segment().model_copy(
+        update={
+            "citation_label": "[E2]",
+            "evidence_id": SECOND_EVIDENCE_ID,
+            "identity": _segment().identity.model_copy(
+                update={"chunk_id": UUID("00000000-0000-0000-0000-000000000718")}
+            ),
+            "text": "清洁前必须断开电源。",
+            "text_sha256": "e" * 64,
+        }
+    )
+    executor = FakeKnowledgeExecutor(
+        {"search_knowledge": [search_envelope(segments=[irrelevant, supporting])]}
+    )
+
+    def finish_with_one_evidence(request: DecisionRequest) -> AgentDecision:
+        del request
+        return AgentDecision(
+            action=FinishAction(
+                public_summary="只上交其中一条候选。",
+                business_outcome="answered",
+                evidence_ids=[SECOND_EVIDENCE_ID],
+            )
+        )
+
+    result = await worker(
+        ScriptedDecisionProvider(
+            [
+                execute("search_knowledge", {"query": "蘑菇灯如何清洁？"}),
+                finish_with_one_evidence,
+            ]
+        ),
+        executor,
+    ).run(handoff(), execution())
+
+    assert result.execution_status == "failed"
+    assert result.business_outcome == "system_error"
+
+    completed = await worker(
+        ScriptedDecisionProvider(
+            [
+                execute("search_knowledge", {"query": "蘑菇灯如何清洁？"}),
+                finish_from_observations,
+            ]
+        ),
+        FakeKnowledgeExecutor(
+            {"search_knowledge": [search_envelope(segments=[irrelevant, supporting])]}
+        ),
+    ).run(handoff(), execution())
+
+    assert completed.execution_status == "completed"
+    assert completed.evidence_ids == [EVIDENCE_ID, SECOND_EVIDENCE_ID]
+    serialized = completed.model_dump_json()
+    assert "清洁前必须断开电源。" in serialized
+    assert "这段只介绍产品颜色" in serialized
+
+
+@pytest.mark.asyncio
+async def test_successful_nonempty_search_cannot_be_rejected_before_answer() -> None:
+    executor = FakeKnowledgeExecutor({"search_knowledge": [search_envelope()]})
+    provider = ScriptedDecisionProvider(
+        [
+            execute("search_knowledge", {"query": "蘑菇灯如何清洁？"}),
+            AgentDecision(
+                action=CannotCompleteAction(
+                    public_summary="当前授权范围内未找到可支持回答的证据。",
+                    business_outcome="unsupported",
+                )
+            ),
+        ]
+    )
+
+    result = await worker(provider, executor).run(handoff(), execution())
+
+    assert result.execution_status == "failed"
+    assert result.business_outcome == "system_error"
+
+    bypass = await worker(
+        ScriptedDecisionProvider(
+            [
+                execute("search_knowledge", {"query": "蘑菇灯如何清洁？"}),
+                AgentDecision(
+                    action=FinishAction(
+                        public_summary="没有选择证据但仍声称回答完成。",
+                        business_outcome="answered",
+                    )
+                ),
+            ]
+        ),
+        FakeKnowledgeExecutor({"search_knowledge": [search_envelope()]}),
+    ).run(handoff(), execution())
+    assert bypass.execution_status == "failed"
+    assert bypass.business_outcome == "system_error"
+
+
+@pytest.mark.asyncio
+async def test_search_knowledge_binds_twelve_long_segments_without_overflow() -> None:
+    segments = [
+        _segment().model_copy(
+            update={
+                "citation_label": f"[E{index + 1}]",
+                "evidence_id": UUID(f"00000000-0000-0000-0001-{index:012d}"),
+                "identity": _segment().identity.model_copy(
+                    update={"chunk_id": UUID(f"00000000-0000-0000-0002-{index:012d}")}
+                ),
+                "text": "合成的长证据正文" * 150,
+                "text_sha256": f"{index:064x}",
+                "token_count": 200,
+            }
+        )
+        for index in range(12)
+    ]
+    executor = FakeKnowledgeExecutor(
+        {"search_knowledge": [search_envelope(segments=segments)]}
+    )
+    provider = ScriptedDecisionProvider(
+        [
+            execute("search_knowledge", {"query": "蘑菇灯如何清洁？"}),
+            finish_from_observations,
+        ]
+    )
+
+    result = await worker(provider, executor).run(handoff(), execution())
+
+    assert result.execution_status == "completed"
+    assert result.business_outcome == "answered"
+    assert len(result.evidence_ids) == 12
+    assert result.observations[0].structured_result is not None
+    public_data = result.observations[0].structured_result.root["data"]
+    assert isinstance(public_data, dict)
+    assert len(public_data["segments"]) == 12
 
 
 @pytest.mark.asyncio

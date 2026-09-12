@@ -11,6 +11,7 @@ from app.core.errors import (
     ApplicationError,
     KnowledgeEvidencePersistenceError,
 )
+from app.core.rag_trace import RagReviewTrace, rag_review_trace
 from app.schemas.auth import CurrentUser
 from app.schemas.context import ContextBundle
 from app.schemas.evidence import DocumentEvidenceDetail
@@ -198,11 +199,10 @@ def test_orchestrates_one_trusted_request_in_fixed_order_with_aligned_evidence()
         events=events,
     )
 
-    outcome = service.search(
-        user,
-        request,
-        runtime_context=runtime_context,
-    )
+    trace = RagReviewTrace()
+    with rag_review_trace(trace):
+        outcome = service.search(user, request, runtime_context=runtime_context)
+    assert trace.context == bundle.model_dump(mode="json")
 
     assert isinstance(outcome, KnowledgeSearchOutcome)
     assert [event[0] for event in events] == ["reranker", "context", "evidence"]

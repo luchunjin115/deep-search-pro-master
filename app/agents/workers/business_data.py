@@ -512,6 +512,9 @@ def _failed_result(
         message=error.message,
         retryable=error.retryable,
         field=error.field,
+        diagnostic_stage=(
+            error.stage if isinstance(error, AgentProviderOutputError) else None
+        ),
     )
     return WorkerResult(
         task_id=handoff.task_id,

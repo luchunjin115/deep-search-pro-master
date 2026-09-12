@@ -15,10 +15,12 @@ from app.llm.agent_schemas import (
     HandoffRequest,
     PlannerRequest,
 )
+from app.llm.agent_structured import OutputT, StructuredAgentProvider
 from app.runtime.budget import AgentBudgetLimits, AgentBudgetTree, WorkerBudgetLimits
 from app.runtime.context import RunContext
 from app.runtime.permissions import PermissionGuard
 from app.runtime.trace import RunTrace, TraceRecorder
+from app.schemas.agent import BoundedJsonObject
 from app.tools.registry import ToolRegistry
 
 ROOT_RUN_ID = UUID("00000000-0000-0000-0000-000000000531")
@@ -92,6 +94,52 @@ async def test_provider_adapter_reserves_every_supervisor_model_call() -> None:
         await adapter.create_plan(cast(PlannerRequest, object()))
     assert getattr(captured.value, "reason", None) == "model_call_limit"
     assert provider.create_plan.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_answer_repair_reserves_each_real_model_invoke() -> None:
+    class RepairOnceProvider(StructuredAgentProvider):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def _invoke(
+            self,
+            *,
+            role: str,
+            system_prompt: str,
+            input_payload: dict[str, object],
+            output_type: type[OutputT],
+            output_schema: dict[str, object] | None = None,
+        ) -> OutputT:
+            assert role == "answer"
+            self.calls += 1
+            if self.calls == 1:
+                from app.core.errors import AgentProviderOutputError
+
+                raise AgentProviderOutputError("model_json")
+            return output_type.model_validate(
+                {
+                    "action": {
+                        "type": "finish",
+                        "public_summary": "当前没有可引用证据。",
+                        "business_outcome": "no_evidence",
+                        "citation_labels": [],
+                        "artifact_ids": [],
+                    }
+                }
+            )
+
+    provider = RepairOnceProvider()
+    tree = budget_tree()
+    adapter = BudgetedAgentProvider(provider=provider, budget=tree)
+
+    await adapter.compose_answer(
+        AnswerRequest(goal="未知问题", public_context=BoundedJsonObject({}))
+    )
+
+    assert provider.calls == 2
+    assert adapter.last_answer_model_calls == 2
+    assert tree.snapshot().model_calls == 2
 
 
 def test_harness_adapter_uses_child_budget_and_rejects_context_mismatch() -> None:
